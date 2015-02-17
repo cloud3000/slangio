@@ -1,9 +1,5 @@
-#include <ctype.h>
-#include <signal.h>
-#include <sys/types.h>
 #include "slangio.h"
 static pid_t GetMasterPid();
-
 static int libslangio_debug = 0;
 static int memfd = -1;
 static int LOG_CONTROL = 0;
@@ -157,20 +153,20 @@ static pid_t GetMasterPid()
 	return masterpid;
 }
 
-void LogOpenSystem(char *id) {
+extern void LogOpenSystem(char *id) {
     openlog(id, LOG_PID,LOG_USER);
 	LOG_CONTROL = 1;
 }
 
-void LogDebugOn() {
+extern void LogDebugOn() {
 	setlogmask(LOG_UPTO(LOG_DEBUG));
 }
 
-void LogDebugOff() {
+extern void LogDebugOff() {
 	setlogmask(LOG_UPTO(LOG_ERR));
 }
 
-void LogEmerg(char *msg, ...) {
+extern void LogEmerg(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -181,7 +177,7 @@ void LogEmerg(char *msg, ...) {
 }
 
 
-void LogAlert(char *msg, ...) {
+extern void LogAlert(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -191,7 +187,7 @@ void LogAlert(char *msg, ...) {
 	errno = 0;
 }
 
-void LogCrit(char *msg, ...) {
+extern void LogCrit(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -201,7 +197,7 @@ void LogCrit(char *msg, ...) {
 	errno = 0;
 }
 
-void LogErr(char *msg, ...) {
+extern void LogErr(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -211,7 +207,7 @@ void LogErr(char *msg, ...) {
 	errno = 0;
 }
 
-void LogWarning(char *msg, ...) {
+extern void LogWarning(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -221,7 +217,7 @@ void LogWarning(char *msg, ...) {
 	errno = 0;
 }
 
-void LogNotice(char *msg, ...) {
+extern void LogNotice(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -231,7 +227,7 @@ void LogNotice(char *msg, ...) {
 	errno = 0;
 }
 
-void LogInfo(char *msg, ...) {
+extern void LogInfo(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -241,7 +237,7 @@ void LogInfo(char *msg, ...) {
 	errno = 0;
 }
 
-void LogDebug(char *msg, ...) {
+extern void LogDebug(char *msg, ...) {
 	va_list args;
 	char fullmsg[LINE_MAX];
 	va_start(args, msg);
@@ -255,3 +251,102 @@ extern void LogClose() {
 	closelog();
 }
 
+static int	read_cnt;
+static char	*read_ptr;
+static char	read_buf[BUFFSIZE];
+/* ************************************************************** */
+static ssize_t Actual_Read(int fd, char *ptr)
+{
+/*	Actual_Read will read 0 to MAXLINE bytes, or return error -1
+	If error -1, then we return, AKA: we're done reading.
+	Once the read succeeds then read_cnt contains the number of bytes that were read.
+	Each call thereafter to Actual_Read doesn't call 'read', because read_cnt is positive.
+	So while read_cnt is positive Actual_Read will increment *read_ptr, char by char, while
+	decrementing read_cnt, until read_cnt is zero returning the char at *read_ptr to GetNextLine.
+
+	'GetNextLine' will continue calling Actual_Read 
+	until maxlen is reached, or *read_ptr points to a new line '\n' character.
+
+	Actual_Read should be immune to signal interruption.
+*/ 
+	if (read_cnt <= 0) { // TRUE on first call?
+again:
+		if ( (read_cnt = read(fd, read_buf, sizeof(read_buf))) < 0) {
+			if (errno == EINTR) // The call was interrupted by a signal before any data was read;
+				goto again;	    // Go read again. 
+				
+			return(-1); // read error, and errno is set appropriately. 
+		} else if (read_cnt == 0)
+			return(0); // End of File
+		// read_cnt is > 0
+		read_ptr = read_buf; // Update address of read pointer. 
+	}
+	read_cnt--;
+	*ptr = *read_ptr++; // Set pointer to read pointer and advance the read pointer by 1 character.
+	return(1);
+}
+/* ************************************************************** */
+ssize_t GetNextLine(int fd, void *vptr, size_t maxlen)
+{
+	ssize_t	n, rc;
+	char	c, *ptr;
+	ptr = vptr;
+	for (n = 1; n < maxlen; n++) {
+		if ( (rc = Actual_Read(fd, &c)) == 1) {
+			*ptr++ = c;
+			if (c == '\n')
+				break;	/* newline is stored, like fgets() */
+		} else if (rc == 0) {
+			*ptr = 0;
+			return(n - 1);	/* EOF, n - 1 bytes were read */
+		} else
+			return(-1);		/* error, errno set by read() */
+	}
+	*ptr = 0;	/* null terminate like fgets() */
+	return(n);
+}
+
+/* **************************Readline**************************** */
+/*                   E N T R Y    P O I N T                       */
+/*                 ReadLine calls GetNextLine                     */
+/*                GetNextLine calls ActualRead                    */
+/*    GetNextLine will not return until a newline (/n) is read    */
+/* ************************************************************** */
+ssize_t Readline(int fd, void *ptr, size_t maxlen)
+{
+	ssize_t		n;
+	if ( (n = GetNextLine(fd, ptr, maxlen)) < 0)
+		syslog(LOG_ERR,"GetNextLine error");
+	return(n);
+}
+/* ************************************************************** */
+	/* Write "n" bytes to a descriptor. */
+/* ************************************************************** */
+ssize_t	writen(int fd, const void *vptr, size_t n)
+{
+	size_t		nleft;
+	ssize_t		nwritten;
+	const char	*ptr;
+
+	ptr = vptr;
+	nleft = n;
+	while (nleft > 0) {
+		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
+			if (nwritten < 0 && errno == EINTR)
+				nwritten = 0;		/* and call write() again */
+			else
+				return(-1);			/* error */
+		}
+
+		nleft -= nwritten;
+		ptr   += nwritten;
+	}
+	return(n);
+}
+/* end writen */
+/* ************************************************************** */
+void Writen(int fd, void *ptr, size_t nbytes)
+{
+	if (writen(fd, ptr, nbytes) != nbytes)
+		syslog(LOG_ERR,"writen error");
+}

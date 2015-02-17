@@ -24,30 +24,8 @@
  * THE SOFTWARE.
  *
  */
- 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <sys/resource.h>
-#include <stdarg.h>      /* ANSI C header file */
-#include <syslog.h>      /* for syslog() */
-#include <errno.h>
-#include <sys/wait.h>
-#include "websocket.h"
-/* Miscellaneous constants */
-#define MAXLINE     4096    /* max text line length */
-#define LINE_MAX    4096    /* max text line length */
-#define BUFFSIZE    8192    /* buffer size for reads and writes */
-#define MAXCONNS    256     /* Number of concurrent connections */
-#define STDIN_FILENO 0
-#define STDOUT_FILENO 1
-#define STDERR_FILENO 2
+#include "slangio.h" 
+#include <pthread.h>
 
 void    Pthread_create(pthread_t *, const pthread_attr_t *, void * (*)(void *), void *);
 void    Pthread_detach(pthread_t);
@@ -56,10 +34,8 @@ void    error(const char *msg);
 int     safeSend(int NewConns, uint8_t buffer, size_t bufferSize);
 int     session_init(int sockfd);
 void    Close_Thread(int fd);
-void    Writen(int, void *, size_t);
 
 #define PORT 8081
-#define BUF_LEN 0xFFFF
 #define PACKET_DUMP
 
 static int SIO_MAX_FD;
@@ -127,7 +103,7 @@ int safeSend(int NewConns, uint8_t buffer, size_t bufferSize)
 //***************************************************
 int session_init(int sockfd)
 {
-    char buf[BUF_LEN];
+    char buf[BUFFSIZE];
     int i = 0;
     int MAX_Fileno;
     int sid;
@@ -135,7 +111,7 @@ int session_init(int sockfd)
     pid_t pid0;
     pid_t pid1;
     pid_t w;
-    char *argv[1024];
+    char *argv[ARGSMAX];
     int stdin[2];
     int stdout[2];
     int stderr[3];
@@ -188,12 +164,12 @@ int session_init(int sockfd)
             }
 
         sleep(5);
-        sprintf(buf, "Child Slang.IO Server, r1.0 socket=%d\n", sockfd);
+        sprintf(buf, "Child Slang.IO Server, SIO_LOGIN_VERSION socket=%d\n", sockfd);
         Writen(sockfd, buf, strlen(buf));
         // This is to be the deamon process.
-        execvp("/volume1/applications/slangio_main", argv);
+        execvp(SIO_APPL_MAIN, argv);
     } else {
-        sprintf(buf, "Parent Slang.IO Server, r1.0 socket=%d\n", sockfd);
+        sprintf(buf, "Parent Slang.IO Server, SIO_LOGIN_VERSION socket=%d\n", sockfd);
         Writen(sockfd, buf, strlen(buf));
         // Reap death of Child, no zombies please.
         // This is not for the execvp's child directly above.
@@ -205,7 +181,7 @@ int session_init(int sockfd)
         Writen(sockfd, buf, strlen(buf));
         close(sockfd); 
     }
-    
+
 } // Thread will terminate, and it's already detacted, so no join is needed.
 
 //***************************************************
@@ -223,7 +199,7 @@ int main(int argc, char** argv)
     pthread_t       tid;
     int i = 0;
     int ncptr = 0;
-    int NewConns[256];
+    int NewConns[MAXCONNS];
     int listenSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (listenSocket == -1) {
         syslog(LOG_ERR,"create socket failed");
@@ -271,3 +247,4 @@ int main(int argc, char** argv)
     close(listenSocket);
     return EXIT_SUCCESS;
 }
+    

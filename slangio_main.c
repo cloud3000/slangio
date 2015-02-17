@@ -1,29 +1,10 @@
-#include <limits.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <sys/mman.h> 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <pwd.h>
-#include <grp.h>
-#include <errno.h>
-#include <string.h>
-#include <netdb.h>
-#include <dirent.h>
-#include <ev.h>
+
 /*-----------------------------------------------------------
  * Data Structures
  ----------------------------------------------------------*/
-#include "unp.h"
-#define READ_END 0
-#define WRITE_END 1
+#include "slangio.h"
 /* Prototypes */ 
+int getSocket();
 static int 	SaveUser(char *username);
 static int 	SwitchUser(char *username);
 static void KillChildren();
@@ -56,9 +37,9 @@ static 			ev_child SIO_children[SIO_CHILD_BLOCKS];
 static int 		SIO_nextchild = 0;
 static int 		SIO_count = 0;
 static char 	SIO_exec[LINE_MAX];
-static char 	checksec[LINE_MAX] = "/volume1/applications/application";
-static char 	loginuser[LINE_MAX] = "j3k";
-static char 	firstprog[LINE_MAX] = "application";
+static char 	checksec[LINE_MAX] = SIO_APPL_SECURITY;
+static char 	loginuser[LINE_MAX] = SIO_DEFAULT_USER;
+static char 	firstprog[LINE_MAX] = SIO_APPL_MAIN;
 static char 	mpeldev[LINE_MAX];
 static char 	branch[LINE_MAX];
 static char 	authcode[LINE_MAX];
@@ -184,8 +165,8 @@ static void ChildExit (EV_P_ ev_child *w, int revents) {
 
 /*---------------------------STDOUT_FromClient_Ready------------------------*/
 static void STDOUT_FromClient_Ready (struct ev_loop *loop, ev_io *w, int revents) {
-	char	buffer[LINE_MAX];
-	char	result[LINE_MAX];
+	char	buffer[BUFFSIZE];
+	char	result[BUFFSIZE];
 	int len;
 	int *output;
 	
@@ -212,8 +193,8 @@ static void STDOUT_FromClient_Ready (struct ev_loop *loop, ev_io *w, int revents
 /*---------------------------STDOUT_FromChild_Ready------------------------*/
 static void STDOUT_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents) {
 
-	char	buffer[LINE_MAX];
-	char	result[LINE_MAX];
+	char	buffer[BUFFSIZE];
+	char	result[BUFFSIZE];
 	int len;
 	int *output;
 	
@@ -239,8 +220,8 @@ static void STDOUT_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents)
 /*---------------------------STDERR_FromChild_Ready------------------------*/
 static void STDERR_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents) {
 
-	char	buffer[LINE_MAX];
-	char	result[LINE_MAX];
+	char	buffer[BUFFSIZE];
+	char	result[BUFFSIZE];
 	int len;
 	int *output;
 	
@@ -465,7 +446,7 @@ int MakeChild(char *cmd, char *user) {
 	LogDebug("MakeChild Starting");
 	int rc = 0;
 	int argc = 0;
-	static char buf[LINE_MAX] = "";
+	static char buf[BUFFSIZE] = "";
 	static char copycmd[LINE_MAX] = "";
 	static char execcmd[LINE_MAX] = "";
 	static char arg0[LINE_MAX] = "";
@@ -647,21 +628,22 @@ int main (int argc, char *argv[]) {
 	int block;
 	unsigned short mpeidx = 0;
 	unsigned short mpeid = 0;
-	short mpelen = 8195; 
 	unsigned char *memptr;
 	unsigned char *secptr;
 	char	*envvar = NULL;
 	char buf[LINE_MAX];
 	//struct tms sessiontime;
 	struct stat filestat;
-	char logid[16] = "slangio_main";
+	char logid[] = "slangio_main";
 
 	// Get socket descriptor
 	sockfd = getSocket(); 
     sprintf(buf, "slangio_main, socket descriptor is: %d\n", sockfd);
     Writen(sockfd, buf, strlen(buf)); // This is first output sent back to the client.
 	
-	LogOpenSystem(logid);
+    openlog("slangio_main", LOG_PID, LOG_USER);
+	setlogmask(LOG_UPTO(LOG_DEBUG));
+    syslog(LOG_INFO, "%s STARTED ", argv[0]);
 	LogDebug("slangio_main started");
 	LogDebug("%s",buf);
 

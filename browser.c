@@ -1,6 +1,4 @@
-#include <syslog.h>      /* for syslog() */
-#include "unp.h"
-#define	MAXN	16384		/* max # bytes client can request */
+#include "slangio.h"
 #define SERVER "localhost"
 #define PORT 8081
 #define TRUE 1
@@ -9,24 +7,13 @@
 static void 	ReadStdin (struct ev_loop *, ev_io *, int);
 static void 	ReadSocket (struct ev_loop *, ev_io *, int);
 static int 		EventLoop ();
-void LogDebug(char *msg, ...);
 
-static char		line[MAXLINE];
+static char		line[BUFFSIZE];
 static int 		sockfd;
-int 		SHUTDOWN = FALSE;
+int 			SHUTDOWN = FALSE;
 
 char *global_argv[64];
 
-/*---------------------------LogDebug------------------------*/
-void LogDebug(char *msg, ...) {
-	va_list args;
-	char fullmsg[MAXLINE];
-	va_start(args, msg);
-	vsnprintf(fullmsg, sizeof(fullmsg), msg, args);  
-	syslog(LOG_DEBUG, "%s errno=%d (%m)\n", fullmsg, errno);
-	va_end(args);
-	errno = 0;
-}
 /*---------------------------Idle------------------------*/
 static void Idle (struct ev_loop *loop, ev_idle *w, int revents) {
 	if (SHUTDOWN) {
@@ -41,13 +28,13 @@ static void Idle (struct ev_loop *loop, ev_idle *w, int revents) {
 }
 /*-----------------------------ReadStdin------------------------------*/
 static void ReadStdin(struct ev_loop *loop, ev_io *w, int revents) {
-	char 		result[MAXLINE];
-	char 		new_string[MAXLINE];
+	char 		result[BUFFSIZE];
+	char 		new_string[BUFFSIZE];
 
     LogDebug("%s ReadStdin Fired ", global_argv[0]);
     __fpurge(stdin);
     fflush(stdout);
-	fgets(new_string, MAXLINE, stdin);
+	fgets(new_string, BUFFSIZE, stdin);
 
 	// Processing input from stdin
 	sprintf(result, "%s\n", new_string);
@@ -59,11 +46,11 @@ static void ReadStdin(struct ev_loop *loop, ev_io *w, int revents) {
 /*-----------------------------ReadSocket-----------------------------*/
 static void ReadSocket (struct ev_loop *loop, ev_io *w, int revents) {
 	ssize_t		nread;
-	char 		result[MAXLINE];
+	char 		result[BUFFSIZE];
 
 	// Get input from remote application
     LogDebug("%s ReadSocket Fired ", global_argv[0]);
-	nread = Readline(sockfd, line, MAXLINE);
+	nread = Readline(sockfd, line, BUFFSIZE);
 
 	// Processing input from remote application
 	if (nread < 1) {
