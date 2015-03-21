@@ -1,9 +1,10 @@
 /*
  * Copyright (c) 2014 Cloud3000.com
- * Author: Michael at Cloud3000.com, a C Programming newbie.
+ * Author: Michael at Cloud3000.com
  * cobc -x -lpthread slangio_server.c
  *
- * Special Thanks to Richard Sonnier for helping me with the C programming language.
+ * Special Thanks to Richard Sonnier of Nimble Services,
+ * for helping me with the C programming language.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +23,11 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
+ * 
+ *  TODO's
+ *  some pre-process initialization for session control-block storage
+ *  maybe add event based signaling for messaging, for commands to shutdown or retrieve info.
+ *  
  *
  */
 #include "slangio.h" 
@@ -31,7 +37,6 @@ void    Pthread_create(pthread_t *, const pthread_attr_t *, void * (*)(void *), 
 void    Pthread_detach(pthread_t);
 void    * Client_Thread(void *arg);
 void    error(const char *msg);
-int     safeSend(int NewConns, uint8_t buffer, size_t bufferSize);
 int     session_init(int sockfd);
 void    Close_Thread(int fd);
 
@@ -44,7 +49,6 @@ static int SIO_MAX_FD;
 void Pthread_create(pthread_t *tid, const pthread_attr_t *attr, void * (*func)(void *), void *arg)
 {
     int     n;
-
     if ( (n = pthread_create(tid, attr, func, arg)) == 0)
         return;
     errno = n;
@@ -55,7 +59,6 @@ void Pthread_create(pthread_t *tid, const pthread_attr_t *attr, void * (*func)(v
 void Pthread_detach(pthread_t tid)
 {
     int     n;
-
     if ( (n = pthread_detach(tid)) == 0)
         return;
     errno = n;
@@ -79,65 +82,38 @@ void error(const char *msg)
 }
 
 //***************************************************
-int safeSend(int NewConns, uint8_t buffer, size_t bufferSize)
-{
-    #ifdef PACKET_DUMP
-    syslog(LOG_INFO,"out packet: %u", buffer);
-    fwrite(&buffer, 1, bufferSize, stdout);
-    #endif
-    ssize_t written = send(NewConns, &buffer, bufferSize, 0);
-    if (written == -1) {
-        close(NewConns);
-        perror("send failed");
-        return EXIT_FAILURE;
-    }
-    if (written != bufferSize) {
-        close(NewConns);
-        perror("written not all bytes");
-        return EXIT_FAILURE;
-    }
-    
-    return EXIT_SUCCESS;
-}
-
-//***************************************************
 int session_init(int sockfd)
 {
     char buf[BUFFSIZE];
     int i = 0;
-    int MAX_Fileno;
     int sid;
     int status;
     pid_t pid0;
     pid_t pid1;
     pid_t w;
     char *argv[ARGSMAX];
-    int stdin[2];
-    int stdout[2];
-    int stderr[3];
     SIO_MAX_FD = sysconf(_SC_OPEN_MAX);
 
     syslog(LOG_INFO,"%d starting a session", getpid());
     pid0 = fork();
     if (pid0 == 0) {
-        pipe(stdin);
-        pipe(stdout);
-        pipe(stderr);
 
-        pid1 = fork();
+        pid1 = fork();  // Double-fork.. creating a deamon.
+                        // pid0 will exit imediately, orphan pid1
+                        // pid1 will become an independent session leader, slangio_main.
         if (pid1 < 0) {  
             syslog(LOG_CRIT,"Critical condition, can't Fork a process");   
             exit(EXIT_FAILURE);  
         }     
   
         if (pid1 > 0) {  
-            pid0 = getpid();
-            exit(EXIT_SUCCESS); /*Killing the Parent Process*/  
+            exit(EXIT_SUCCESS); /* Killing pid0, leaving pid1 to go it alone.
+                                    hopefully pid1 will be adopted by init. */  
         }     
 
         syslog(LOG_INFO," New Session leader %d",getpid());
   
-        /* At this point we are executing as the child process */  
+        /* At this point we are executing as the child process pid1 */  
   
         /* Create a new SID for the child process */  
         sid = setsid();  
@@ -157,32 +133,33 @@ int session_init(int sockfd)
             exit(EXIT_FAILURE);  
         }
   
+        /* Close all other file descriptors, except for the socket to the client.
+            When slangio_main is executed, it will use all 3 standard I/O files. */
 
-        /* Close all other file descriptors greater than stderr*/
-        for(i=STDERR_FILENO+1; i < SIO_MAX_FD; i++) { 
-            if (i != sockfd) close(i);
+        for(i=0; i < SIO_MAX_FD; i++) { 
+            if (i != sockfd) close(i); // slangio_main will need this.
             }
 
-        sleep(5);
-        sprintf(buf, "Child Slang.IO Server, SIO_LOGIN_VERSION socket=%d\n", sockfd);
-        Writen(sockfd, buf, strlen(buf));
-        // This is to be the deamon process.
-        execvp(SIO_APPL_MAIN, argv);
+        /* redirect stdin, stdout, and stderr to /dev/null 
+            However, slangio_main will close & redirect standard I/O for it's own children */
+        open("/dev/null", O_RDONLY);
+        open("/dev/null", O_RDWR);
+        open("/dev/null", O_RDWR);
+        execvp("/volume1/applications/slangio_main", argv);
     } else {
-        sprintf(buf, "Parent Slang.IO Server, SIO_LOGIN_VERSION socket=%d\n", sockfd);
-        Writen(sockfd, buf, strlen(buf));
-        // Reap death of Child, no zombies please.
-        // This is not for the execvp's child directly above.
-        // This waitpid call is for the first forked child, who has already died.
-        w = waitpid(pid0, &status, WUNTRACED | WCONTINUED);  
-        sleep(1);
+        w = waitpid(pid0, &status, WUNTRACED | WCONTINUED);  // reap pid0
         syslog(LOG_INFO,"session_init socket %d", sockfd);
-        sprintf(buf, "session_init In-Thread: Closing %d\n", sockfd);
-        Writen(sockfd, buf, strlen(buf));
+        // Now we can release sockfd, to be reused.
         close(sockfd); 
     }
 
-} // Thread will terminate, and it's already detacted, so no join is needed.
+} /* Thread will terminate, and it's already detacted, so no join is needed.
+
+      NOTE:   This process blocks only for new connections, and nothing else.
+              I use this thread to fork a new session, so I can quickly get
+              back to listening for new connections.
+              
+              Trying to keep it simple, no events or signals. */
 
 //***************************************************
 void Close_Thread(int fd)

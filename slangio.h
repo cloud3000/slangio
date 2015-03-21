@@ -35,7 +35,7 @@
 #define READ_END 0
 #define WRITE_END 1
 #define TRUE 1
-#define	BUFFSIZE	16384	/* buffer size for reads and writes */
+#define	BUFFSIZE	2048	/* buffer size for reads and writes */
 #define	MAXLINE		4096	/* max text line length */
 #define MAX_CMD_ARGS 32
 #define ARGSMAX 1024
@@ -63,26 +63,14 @@
 #define SIO_PID_FMT "/volume1/applications/j3k/mysess%08d"
 #define SIO_PLOCK_FMT "%s/%s"
 #define SIO_PROFILE "/volume1/applications/mylogin_profile.sh"
-#define SIO_RUN "run"
-#define SIO_RUNCBL "runcbl"
-#define SIO_RUNCBL_DEBUG "runcbl -d -b +o stdlist_o +ee stdlist_e "
-#define SIO_RUNCBL_ERRFILE "stdlist_e"
-#define SIO_RUNCBL_STD "runcbl -b +o stdlist_o +ee stdlist_e "
-#define SIO_SEND "client send"
 #define SIO_SESSION_FMT "%s/.%08d"
 #define SIO_SESSION_TIME "times"
 #define SIO_SESSION_VAR_MAX 1024
 #define SIO_SESSION_VARLEN_MAX 255
 #define SIO_SHELL "/bin/bash"
-#define SIO_SQL_PATH "/volume1/lib/sql"
-#define SIO_STATUS "status"
-#define SIO_STOP "stop"
-#define SIO_TCL_PATH "/volume1/lib/tcl"
-#define SIO_UNLOCK "unlock"
-#define SIO_VPLUS_TCL "tcl_libfunc.tcl"
-#define STDERR_FILENO 2
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
+#define STDERR_FILENO 2
 #define WHITESPACE " \t\n\r"
 
 extern void LogOpenSystem(char *id);
@@ -100,5 +88,4 @@ extern void LogDebugOn();
 extern void LogDebugOff();
 extern void base64enc(char* dest, const void* src, uint16_t length);
 void PutEnv (char *format, ...);
-ssize_t	 Readline(int, void *, size_t);
 void	 Writen(int, void *, size_t);

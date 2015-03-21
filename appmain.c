@@ -24,12 +24,16 @@ static void Idle (struct ev_loop *loop, ev_idle *w, int revents) {
 		ev_sleep(yieldtime);
 	}
 }
+
 /*-----------------------------ReadStdin------------------------------*/
 static void ReadStdin(struct ev_loop *loop, ev_io *w, int revents) {
 	int			ntowrite;
 	char 		result[BUFFSIZE];
 	char 		new_string[BUFFSIZE];
 
+	// Set buffers to NULL
+	memset( (void *)&result, '\0', sizeof(result)); 
+	memset( (void *)&new_string, '\0', sizeof(new_string)); 
 	// Read from stdin
     __fpurge(stdin);
     fflush(stdout);
@@ -38,18 +42,15 @@ static void ReadStdin(struct ev_loop *loop, ev_io *w, int revents) {
 
 	// Processing input from User Interface
 	if ((strncmp("ev://cli_exit/", (const char *)&new_string, 14)) == 0) {
-		sprintf(result, "ev://app_exit/%s\n", global_argv[0]);
+		sprintf(result, "ev://app_exit/");
 		Writen(STDOUT_FILENO, result, strlen(result));
 		SHUTDOWN = TRUE;
 		ev_io_stop(loop, w);
 	} else {
-		sprintf(result, "%s\n", new_string);
+		sprintf(result, "%s", new_string);
 		Writen(STDOUT_FILENO, result, strlen(result));
 	}
 
-	// Set buffers to NULL
-	memset( (void *)&result, '\0', sizeof(result)); 
-	memset( (void *)&new_string, '\0', sizeof(new_string)); 
 }
 /*-----------------------------EventLoop------------------------------*/
 static  int EventLoop () {
@@ -82,14 +83,25 @@ static  int EventLoop () {
   ---------------------------main------------------------*/
 int main(int argc, char *argv[])
 {
+	char 		result[BUFFSIZE];
 	*global_argv = *argv;
-    openlog("application", LOG_PID, LOG_USER);
-	setlogmask(LOG_UPTO(LOG_DEBUG));
-    syslog(LOG_INFO, "%s STARTED ", argv[0]);
+    LogOpenSystem("application");
+	LogDebugOn();
+    LogDebug("%s STARTED ", argv[0]);
+	sprintf(result, "Application Started\n");
+	Writen(STDOUT_FILENO, result, strlen(result));
+	sprintf(result, "*******************\n");
+	Writen(STDOUT_FILENO, result, strlen(result));
+	sprintf(result, "*   Hello World   *\n");
+	Writen(STDOUT_FILENO, result, strlen(result));
+	sprintf(result, "*   dlroW olleH   *\n");
+	Writen(STDOUT_FILENO, result, strlen(result));
+	sprintf(result, "*******************\n");
+	Writen(STDOUT_FILENO, result, strlen(result));
 
 	int rc = EventLoop();
 
-    syslog(LOG_INFO, "%s SHUTDOWN ", argv[0]);
+    LogDebug("%s SHUTDOWN ", argv[0]);
 	/* SHUTDOWN */
 	close(sockfd);
 	exit(0);

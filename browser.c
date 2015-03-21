@@ -4,6 +4,9 @@
 #define TRUE 1
 #define FALSE 0
 
+ssize_t			STDIN_to_Socket(int, const void *, size_t);
+static ssize_t 	SOCKET_Actual_Read(int, char *);
+ssize_t 		SOCKET_GetNextLine(int, void *, size_t);
 static void 	ReadStdin (struct ev_loop *, ev_io *, int);
 static void 	ReadSocket (struct ev_loop *, ev_io *, int);
 static int 		EventLoop ();
@@ -11,9 +14,79 @@ static int 		EventLoop ();
 static char		line[BUFFSIZE];
 static int 		sockfd;
 int 			SHUTDOWN = FALSE;
+int 			SOCKET_ready = FALSE;
+static int		SOCKET_cnt;
+static char		*SOCKET_ptr;
+static char		SOCKET_buf[BUFFSIZE];
 
 char *global_argv[64];
+/* ************************************************************** */
+ssize_t	STDIN_to_Socket(int fd, const void *vptr, size_t n)
+{
+	size_t		nleft;
+	ssize_t		nwritten;
+	const char	*ptr;
 
+	ptr = vptr;
+	nleft = n;
+	while (nleft > 0) {
+		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
+			if (nwritten < 0 && errno == EINTR)
+				nwritten = 0;		/* and call write() again */
+			else
+				return(-1);			/* error */
+		}
+
+		nleft -= nwritten;
+		ptr   += nwritten;
+	}
+	return(n);
+}
+/* ************************************************************** */
+static ssize_t SOCKET_Actual_Read(int fd, char *ptr)
+{
+	if (SOCKET_cnt <= 0) { // TRUE on first call?
+socketagain:
+		if ( (SOCKET_cnt = read(fd, SOCKET_buf, sizeof(SOCKET_buf))) < 0) {
+			if (errno == EINTR) {	// The call was interrupted by a signal before any data was read;
+				goto socketagain;	// Go read again. 
+			}
+
+			return(-1); // read error, errno is set appropriately.	
+		} else {
+			if (SOCKET_cnt == 0) {  // End of file. The remote has closed the connection. 
+				SOCKET_ready = FALSE;
+				return(0);
+			}				
+		} 
+
+		//If we'er here, then SOCKET_cnt is > 0
+		SOCKET_ptr = SOCKET_buf; // Update address of read pointer. 
+	}
+	SOCKET_cnt--;
+	*ptr = *SOCKET_ptr++; // Set pointer to read pointer and advance the read pointer by 1 character.
+	return(1);
+}
+/* ************************************************************** */ 
+ssize_t SOCKET_GetNextLine(int fd, void *vptr, size_t maxlen)
+{
+	ssize_t	n, rc;
+	char	c, *ptr;
+	ptr = vptr;
+	for (n = 1; n < maxlen; n++) {
+		if ( (rc = SOCKET_Actual_Read(fd, &c)) == 1) {
+			*ptr++ = c;
+			if (c == '\n')
+				break;	/* newline is stored, like fgets() */
+		} else if (rc == 0) {
+			*ptr = 0;
+			return(n - 1);	/* EOF, n - 1 bytes were read */
+		} else
+			return(rc);		/* error, errno set by read() */
+	}
+	*ptr = 0;	/* null terminate like fgets() */
+	return(n);
+}
 /*---------------------------Idle------------------------*/
 static void Idle (struct ev_loop *loop, ev_idle *w, int revents) {
 	if (SHUTDOWN) {
@@ -37,8 +110,9 @@ static void ReadStdin(struct ev_loop *loop, ev_io *w, int revents) {
 	fgets(new_string, BUFFSIZE, stdin);
 
 	// Processing input from stdin
-	sprintf(result, "%s\n", new_string);
-	Writen(sockfd, result, strlen(result));
+	sprintf(result, "%s", new_string);
+	STDIN_to_Socket(sockfd, result, strlen(result));
+
 
 	memset( (void *)&result, '\0', sizeof(result)); 
 	memset( (void *)&new_string, '\0', sizeof(new_string)); 
@@ -46,29 +120,42 @@ static void ReadStdin(struct ev_loop *loop, ev_io *w, int revents) {
 /*-----------------------------ReadSocket-----------------------------*/
 static void ReadSocket (struct ev_loop *loop, ev_io *w, int revents) {
 	ssize_t		nread;
+	ssize_t		len;
+	ssize_t		t;
 	char 		result[BUFFSIZE];
-
-	// Get input from remote application
-    LogDebug("%s ReadSocket Fired ", global_argv[0]);
-	nread = Readline(sockfd, line, BUFFSIZE);
-
-	// Processing input from remote application
-	if (nread < 1) {
-		ev_io_stop(loop, w);
-		printf("Remote connection closed.\n");
-		SHUTDOWN = TRUE;
-	} else {
-		if (line == "ev://app_exit/") {
-			SHUTDOWN = TRUE;
-			ev_io_stop(loop, w);
-		} else {
-			sprintf(result, "%s\n", line	);
-			printf("[%s]\n", result );
-		}
-	}
+	nread = 0;
+	SOCKET_ready = TRUE;
 	memset( (void *)&result, '\0', sizeof(result)); 
 	memset( (void *)&line, '\0', sizeof(line)); 
+    LogDebug("%s ReadSocket Fired ", global_argv[0]);
+	fcntl (w->fd, F_SETFL, O_NONBLOCK);
+	while ( SOCKET_ready ) {
+		nread = SOCKET_GetNextLine(w->fd, line, sizeof(line));
+		if (nread > 0) {
+			t += nread;
+			sprintf(result, "%s", line);
+			len = strlen(result);
+			if (line == "ev://app_exit/") {
+				SHUTDOWN = TRUE;
+				ev_io_stop(loop, w);
+				printf("Application requested SHUTDOWN\n");
+			} else {
+				printf("%s", result );
+			}
+		} else {
+			if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) { 
+			// No more data to read, until next socket event occurs.
+				SOCKET_ready = FALSE;
+			} else {
+				// assume any other error is so bad that the I/O channel is unusable.
+				ev_io_stop(loop, w);
+				printf("Remote connection closed.\n");
+				SHUTDOWN = TRUE;
+			}
+		}
+	} // End while
 }
+
 /*-----------------------------EventLoop------------------------------*/
 static  int EventLoop () {
 	struct ev_loop *loop;
@@ -123,8 +210,9 @@ int main(int argc, char *argv[])
 	memcpy(&server.sin_addr, sp->h_addr, sp->h_length);
 	connect(sockfd, (struct sockaddr *) &server, sizeof(struct sockaddr_in));
 
-	/* Get on with the event-driven conversation */
+	/* All event driven I/O starts in the EventLoop */
 	int rc = EventLoop();
+	/* This process ends when all event driven I/O file descriptors are closed */
 
     syslog(LOG_INFO, "%s SHUTDOWN ", argv[0]);
 	/* SHUTDOWN */

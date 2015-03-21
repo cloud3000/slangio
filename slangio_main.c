@@ -1,34 +1,35 @@
-
-/*-----------------------------------------------------------
- * Data Structures
- ----------------------------------------------------------*/
 #include "slangio.h"
+#define TRUE 1
+#define FALSE 0
+
 /* Prototypes */ 
-int getSocket();
-static int 	SaveUser(char *username);
-static int 	SwitchUser(char *username);
-static void KillChildren();
-static void ChildExit (EV_P_ ev_child *w, int revents);
-static void STDOUT_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents);
-static void STDERR_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents);
-static void STDOUT_FromClient_Ready (struct ev_loop *loop, ev_io *w, int revents);
+static void 	Idle (struct ev_loop *, ev_idle *, int);
+static void 	ChildExit (EV_P_ ev_child *, int);
+int 			getSocket();
+int 			MakeChild(char *, char *);
+int 			EventLoop (int);
 
-static void Idle (struct ev_loop *loop, ev_idle *w, int revents);
-static void CommandReady (struct ev_loop *loop, ev_io *w, int revents);
-static void CommandAccept (struct ev_loop *loop, ev_io *w, int revents);
-static int 	IsNumber(char *str);
-static int 	GetLockFile(char *cmd);
+ssize_t			STDOUT_to_Socket(int fd, const void *vptr, size_t n);
+static void 	STDOUT_FromChild_Event (struct ev_loop *, ev_io *, int);
+static ssize_t 	STDOUT_Actual_Read(int, char *);
+ssize_t 		STDOUT_GetNextLine(int, void *, size_t);
 
-int 		CreateCommandPipe (int id);
-int 		DestroyCommandPipe (int id);
-int 		SetupChildExit(int pid);
-int 		MakeChild(char *cmd, char *user);
-int 		EventLoop (int SIO_pid);
+ssize_t			STDERR_to_Socket(int fd, const void *vptr, size_t n);
+static void 	STDERR_FromChild_Event (struct ev_loop *, ev_io *, int);
+static ssize_t 	STDERR_Actual_Read(int, char *);
+ssize_t 		STDERR_GetNextLine(int, void *, size_t);
+
+ssize_t			SOCKET_to_Appl(int fd, const void *vptr, size_t n);
+static void 	SOCKET_FromClient_Event (struct ev_loop *, ev_io *, int);
+static ssize_t 	SOCKET_Actual_Read(int, char *);
+ssize_t 		SOCKET_GetNextLine(int, void *, size_t);
 
 /* Globals */
-static int Appl_stdin[2];
-static int Appl_stdout[2];
-static int Appl_stderr[2];
+
+static int 		Appl_stdin[2];
+static int 		Appl_stdout[2];
+static int 		Appl_stderr[2];
+static int 		sockfd = 0;
 
 static int 		SIO_toplevel = 0;
 static int 		SIO_MAX_FD;
@@ -40,16 +41,209 @@ static char 	SIO_exec[LINE_MAX];
 static char 	checksec[LINE_MAX] = SIO_APPL_SECURITY;
 static char 	loginuser[LINE_MAX] = SIO_DEFAULT_USER;
 static char 	firstprog[LINE_MAX] = SIO_APPL_MAIN;
-static char 	mpeldev[LINE_MAX];
-static char 	branch[LINE_MAX];
-static char 	authcode[LINE_MAX];
-static char 	authclient[LINE_MAX];
-static char 	conntype[LINE_MAX];
-int 			sockfd = 0;
 static int 		ToChild_fd;
 static int 		FromChild_fd;
 static int 		FromChildErr_fd;
- 
+static int 		SHUTDOWN = FALSE;
+
+static int 		STDOUT_ready = FALSE;
+static int		STDOUT_cnt;
+static char		*STDOUT_ptr;
+static char		STDOUT_buf[BUFFSIZE];
+
+static int 		STDERR_ready = FALSE;
+static int		STDERR_cnt;
+static char		*STDERR_ptr;
+static char		STDERR_buf[BUFFSIZE];
+
+static int 		SOCKET_ready = FALSE;
+static int		SOCKET_cnt;
+static char		*SOCKET_ptr;
+static char		SOCKET_buf[BUFFSIZE];
+/* ************************************************************** */
+ssize_t	STDOUT_to_Socket(int fd, const void *vptr, size_t n)
+{
+	size_t		nleft;
+	ssize_t		nwritten;
+	const char	*ptr;
+
+	ptr = vptr;
+	nleft = n;
+	while (nleft > 0) {
+		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
+			if (nwritten < 0 && errno == EINTR)
+				nwritten = 0;		/* and call write() again */
+			else
+				return(-1);			/* error */
+		}
+
+		nleft -= nwritten;
+		ptr   += nwritten;
+	}
+	return(n);
+}
+/* ************************************************************** */
+ssize_t	STDERR_to_Socket(int fd, const void *vptr, size_t n)
+{
+	size_t		nleft;
+	ssize_t		nwritten;
+	const char	*ptr;
+
+	ptr = vptr;
+	nleft = n;
+	while (nleft > 0) {
+		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
+			if (nwritten < 0 && errno == EINTR)
+				nwritten = 0;		/* and call write() again */
+			else
+				return(-1);			/* error */
+		}
+
+		nleft -= nwritten;
+		ptr   += nwritten;
+	}
+	return(n);
+}
+/* ************************************************************** */
+ssize_t	SOCKET_to_Appl(int fd, const void *vptr, size_t n)
+{
+	size_t		nleft;
+	ssize_t		nwritten;
+	const char	*ptr;
+
+	ptr = vptr;
+	nleft = n;
+	while (nleft > 0) {
+		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
+			if (nwritten < 0 && errno == EINTR)
+				nwritten = 0;		/* and call write() again */
+			else
+				return(-1);			/* error */
+		}
+
+		nleft -= nwritten;
+		ptr   += nwritten;
+	}
+	return(n);
+}
+
+/* ************************************************************** */
+static ssize_t STDOUT_Actual_Read(int fd, char *ptr)
+{
+	if (STDOUT_cnt <= 0) { // TRUE on first call?
+outagain:
+		if ( (STDOUT_cnt = read(fd, STDOUT_buf, sizeof(STDOUT_buf))) < 0) {
+			if (errno == EINTR) // The call was interrupted by a signal before any data was read;
+				goto outagain;	    // Go read again. 
+				
+			return(-1); // read error, and errno is set appropriately. 
+		} else if (STDOUT_cnt == 0)
+			return(0); // End of File
+		// STDOUT_cnt is > 0
+		STDOUT_ptr = STDOUT_buf; // Update address of read pointer. 
+	}
+	STDOUT_cnt--;
+	*ptr = *STDOUT_ptr++; // Set pointer to read pointer and advance the read pointer by 1 character.
+	return(1);
+}
+/* ************************************************************** */ 
+ssize_t STDOUT_GetNextLine(int fd, void *vptr, size_t maxlen)
+{
+	ssize_t	n, rc;
+	char	c, *ptr;
+	ptr = vptr;
+	for (n = 1; n < maxlen; n++) {
+		if ( (rc = STDOUT_Actual_Read(fd, &c)) == 1) {
+			*ptr++ = c;
+			if (c == '\n')
+				break;	/* newline is stored, like fgets() */
+		} else if (rc == 0) {
+			*ptr = 0;
+			return(n - 1);	/* EOF, n - 1 bytes were read */
+		} else
+			return(-1);		/* error, errno set by read() */
+	}
+	*ptr = 0;	/* null terminate like fgets() */
+	return(n);
+}
+/* ************************************************************** */
+static ssize_t STDERR_Actual_Read(int fd, char *ptr)
+{
+	if (STDERR_cnt <= 0) { // TRUE on first call?
+erragain:
+		if ( (STDERR_cnt = read(fd, STDERR_buf, sizeof(STDERR_buf))) < 0) {
+			if (errno == EINTR) // The call was interrupted by a signal before any data was read;
+				goto erragain;	    // Go read again. 
+				
+			return(-1); // read error, and errno is set appropriately. 
+		} else if (STDERR_cnt == 0)
+			return(0); // End of File
+		// STDERR_cnt is > 0
+		STDERR_ptr = STDERR_buf; // Update address of read pointer. 
+	}
+	STDERR_cnt--;
+	*ptr = *STDERR_ptr++; // Set pointer to read pointer and advance the read pointer by 1 character.
+	return(1);
+}
+/* ************************************************************** */ 
+ssize_t STDERR_GetNextLine(int fd, void *vptr, size_t maxlen)
+{
+	ssize_t	n, rc;
+	char	c, *ptr;
+	ptr = vptr;
+	for (n = 1; n < maxlen; n++) {
+		if ( (rc = STDERR_Actual_Read(fd, &c)) == 1) {
+			*ptr++ = c;
+			if (c == '\n')
+				break;	/* newline is stored, like fgets() */
+		} else if (rc == 0) {
+			*ptr = 0;
+			return(n - 1);	/* EOF, n - 1 bytes were read */
+		} else
+			return(-1);		/* error, errno set by read() */
+	}
+	*ptr = 0;	/* null terminate like fgets() */
+	return(n);
+}
+/* ************************************************************** */
+static ssize_t SOCKET_Actual_Read(int fd, char *ptr)
+{
+	if (SOCKET_cnt <= 0) { // TRUE on first call?
+socketagain:
+		if ( (SOCKET_cnt = read(fd, SOCKET_buf, sizeof(SOCKET_buf))) < 0) {
+			if (errno == EINTR) // The call was interrupted by a signal before any data was read;
+				goto socketagain;	    // Go read again. 
+				
+			return(-1); // read error, and errno is set appropriately. 
+		} else if (SOCKET_cnt == 0)
+			return(0); // End of File
+		// SOCKET_cnt is > 0
+		SOCKET_ptr = SOCKET_buf; // Update address of read pointer. 
+	}
+	SOCKET_cnt--;
+	*ptr = *SOCKET_ptr++; // Set pointer to read pointer and advance the read pointer by 1 character.
+	return(1);
+}
+/* ************************************************************** */ 
+ssize_t SOCKET_GetNextLine(int fd, void *vptr, size_t maxlen)
+{
+	ssize_t	n, rc;
+	char	c, *ptr;
+	ptr = vptr;
+	for (n = 1; n < maxlen; n++) {
+		if ( (rc = SOCKET_Actual_Read(fd, &c)) == 1) {
+			*ptr++ = c;
+			if (c == '\n')
+				break;	/* newline is stored, like fgets() */
+		} else if (rc == 0) {
+			*ptr = 0;
+			return(n - 1);	/* EOF, n - 1 bytes were read */
+		} else
+			return(-1);		/* error, errno set by read() */
+	}
+	*ptr = 0;	/* null terminate like fgets() */
+	return(n);
+}
 /*---------------------------getSocket-----------------------*/
 int getSocket()
 {
@@ -69,89 +263,6 @@ int getSocket()
     return file;
 }
 
-/*---------------------------SaveUser------------------------*/
-static int SaveUser(char *username) {
-
-	int	results=0;
-	struct passwd *userinfo;
-
-	userinfo = getpwnam(username);
-	if (userinfo == NULL) {
-		/*
-		 * Invalid username so return to default thinclnt
-		 */
-		LogErr("SaveUser invalid user=%s changing to default %s", 
-			username, SIO_DEFAULT_USER);
-		userinfo = getpwnam(SIO_DEFAULT_USER);
-	}
-	if (userinfo == NULL) {
-		/*
-		 * Invalid username still so possible security violation
-		 * so die to protect the system
-		 */
-		LogErr("SaveUser invalid user=%s default %s fails ", 
-			username, SIO_DEFAULT_USER);
-		LogAlert("SaveUser Security Failed; Aborting....");
-		exit(1);
-	}
-
-//	LogDebug("SaveUser uid=%d gid=%d\n", userinfo->pw_uid, userinfo->pw_gid);
-//	memcpy(&(masterptr->loginuserinfo), userinfo, sizeof(struct passwd));
-	return results;
-}
-
-/*---------------------------SwitchUser------------------------*/
-static int SwitchUser(char *username) {
-
-	struct passwd *userinfo;
-
-	userinfo = getpwnam(username);
-	if (userinfo == NULL) {
-		/*
-		 * Invalid username so return to default thinclnt
-		 */
-		LogErr("SwitchUser invalid user=%s changing to default %s", 
-			username, SIO_DEFAULT_USER);
-		userinfo = getpwnam(SIO_DEFAULT_USER);
-	}
-	if (userinfo == NULL) {
-		/*
-		 * Invalid username still so possible security violation
-		 * so die to protect the system
-		 */
-		LogErr("SwitchUser invalid user=%s default %s fails ", 
-			username, SIO_DEFAULT_USER);
-		LogAlert("SwitchUser Security Failed; Aborting....");
-		exit(1);
-	}
-
-	LogDebug("uid=%d gid=%d\n", userinfo->pw_uid, userinfo->pw_gid);
-//	chown(memfilename, userinfo->pw_uid, userinfo->pw_gid);
-	initgroups(username, userinfo->pw_gid);
-	setregid(userinfo->pw_gid, userinfo->pw_gid);
-	setreuid(userinfo->pw_uid, userinfo->pw_uid);
-	chdir(userinfo->pw_dir);
-
-	PutEnv("HISTFILE=%s/.sh_history", userinfo->pw_dir);
-	PutEnv("HISTSIZE=%d", SIO_HISTSIZE);
-
-	//if (masterptr->sessiondir != NULL) {
-	//	chdir(masterptr->sessiondir);
-	// }
-	return 0;
-}
-
-/*---------------------------KillChildren------------------------*/
-static void KillChildren() {
-
-	int i;
-
-	for (i=0; i < SIO_nextchild; i++) {
-
-		kill(SIO_children[i].pid, SIGQUIT);
-	}
-}
-
 /*---------------------------ChildExit------------------------*/
 static void ChildExit (EV_P_ ev_child *w, int revents) {
 
@@ -163,85 +274,147 @@ static void ChildExit (EV_P_ ev_child *w, int revents) {
 	}
 }
 
-/*---------------------------STDOUT_FromClient_Ready------------------------*/
-static void STDOUT_FromClient_Ready (struct ev_loop *loop, ev_io *w, int revents) {
+/*---------------------------SOCKET_FromClient_Event------------------------*/
+static void SOCKET_FromClient_Event (struct ev_loop *loop, ev_io *w, int revents) {
+	ssize_t	nread;
+	ssize_t len;
+	ssize_t	t;
 	char	buffer[BUFFSIZE];
 	char	result[BUFFSIZE];
-	int len;
-	int *output;
-	
+	int SOCKET_ready = TRUE;
+	int myerror;
+	t = 0;
+	nread = 1;
+	LogDebug("SOCKET_FromClient_Event ");
 	memset( (void *)&result, '\0', sizeof(result)); 
 	memset( (void *)&buffer, '\0', sizeof(buffer)); 
 	fcntl (w->fd, F_SETFL, O_NONBLOCK);
-	len = read(w->fd, buffer, sizeof(buffer));
-	LogDebug("STDOUT_FromClient_Ready read (fd=%d) len=%d", w->fd, len);
-	if (len == 0) {
-		ev_io_stop(loop, w);
-		free(w);
-	} else if (len > 0) {
-		sprintf(buffer, "%s", buffer);
-		LogDebug("STDOUT_FromClient_Ready (fd=%d) buffer=%s", w->fd, buffer);
-		sprintf(result, "%s\n", buffer);
-		len = strlen(result);
-		Writen(Appl_stdin[WRITE_END], result, len);
-	} else {
-		LogErr("STDOUT_FromClient_Ready (fd=%d) read failed", w->fd, buffer);
+	while ( SOCKET_ready ) {
+		nread = SOCKET_GetNextLine(w->fd, buffer, sizeof(buffer));
+		LogDebug("SOCKET_FromClient_Event read (fd=%d) len=%d", w->fd, nread);
+		if (nread > 0) {
+			t += nread;
+			sprintf(result, "%s", buffer);
+//			result[strcspn ( result, "\n" )] = '\0';
+			len = strlen(result);
+			SOCKET_to_Appl(Appl_stdin[WRITE_END], result, len);
+		} else {
+			myerror = errno;
+			switch(myerror){
+				case 0 :
+					SOCKET_ready = FALSE;
+					if (nread == 0){
+						ev_io_stop(loop, w);
+						LogDebug("Client closed SOCKET connection ");
+						SHUTDOWN = TRUE;
+						sprintf(result, "ev://cli_exit/\n");
+						len = strlen(result);
+						SOCKET_to_Appl(Appl_stdin[WRITE_END], result, len);
+					}
+					break;
+			    case EWOULDBLOCK :
+					SOCKET_ready = FALSE;
+					break;
+  				default : // assume any other error is so bad that the I/O channel is unusable.
+					ev_io_stop(loop, w);
+					LogDebug("Client SOCKET error connection closed");
+					SOCKET_ready = FALSE;
+					SHUTDOWN = TRUE;
+			}
+		}
 	}
 }
 
-
-/*---------------------------STDOUT_FromChild_Ready------------------------*/
-static void STDOUT_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents) {
-
+/*---------------------------STDOUT_FromChild_Event------------------------*/
+static void STDOUT_FromChild_Event (struct ev_loop *loop, ev_io *w, int revents) {
+	ssize_t	nread;
+	ssize_t len;
+	ssize_t	t = 0;
 	char	buffer[BUFFSIZE];
 	char	result[BUFFSIZE];
-	int len;
-	int *output;
-	
+	int 	myerror;
+	t = 0;
+	nread = 1;
+	STDOUT_ready = TRUE;
+	LogDebug("STDOUT_FromChild_Event ");
 	memset( (void *)&result, '\0', sizeof(result)); 
 	memset( (void *)&buffer, '\0', sizeof(buffer)); 
 	fcntl (w->fd, F_SETFL, O_NONBLOCK);
-	len = read(w->fd, buffer, sizeof(buffer));
-	LogDebug("STDOUT_FromChild_Ready read (fd=%d) len=%d", w->fd, len);
-	if (len == 0) {
-		ev_io_stop(loop, w);
-		free(w);
-	} else if (len > 0) {
-		sprintf(buffer, "%s", buffer);
-		LogDebug("STDOUT_FromChild_Ready (fd=%d) buffer=%s", w->fd, buffer);
-		sprintf(result, "%s\n", buffer);
-		len = strlen(result);
-		Writen(sockfd, result, len);
-	} else {
-		LogErr("STDOUT_FromChild_Ready (fd=%d) read failed", w->fd, buffer);
+	while ( STDOUT_ready ) {
+		nread = STDOUT_GetNextLine(w->fd, buffer, sizeof(buffer));
+		LogDebug("STDOUT_FromChild_Event read (fd=%d) len=%d", w->fd, nread);
+		if (nread > 0) {
+			t += nread;
+			sprintf(result, "STDOUT:%s", buffer);
+			len = strlen(result);
+			STDOUT_to_Socket(sockfd, result, len);
+		} else {
+			myerror = errno;
+			switch(myerror){
+				case 0 :
+					STDOUT_ready = FALSE;
+					if (nread == 0){
+						ev_io_stop(loop, w);
+						LogDebug("Child closed STDOUT pipe ");
+						SHUTDOWN = TRUE;
+					}
+					break;
+			    case EWOULDBLOCK :
+					STDOUT_ready = FALSE;
+					break;
+  				default : // assume any other error is so bad that the I/O channel is unusable.
+					ev_io_stop(loop, w);
+					LogDebug("Child STDOUT error pipe closed");
+					STDOUT_ready = FALSE;
+					SHUTDOWN = TRUE;
+			}
+		}
 	}
 }
 
-/*---------------------------STDERR_FromChild_Ready------------------------*/
-static void STDERR_FromChild_Ready (struct ev_loop *loop, ev_io *w, int revents) {
+/*---------------------------STDERR_FromChild_Event------------------------*/
+static void STDERR_FromChild_Event (struct ev_loop *loop, ev_io *w, int revents) {
 
+	ssize_t	nread;
+	ssize_t len;
+	ssize_t	t;
 	char	buffer[BUFFSIZE];
 	char	result[BUFFSIZE];
-	int len;
-	int *output;
-	
+	int 	myerror;
+	t = 0;
+	nread = 1;
+	STDERR_ready = TRUE;
 	memset( (void *)&result, '\0', sizeof(result)); 
 	memset( (void *)&buffer, '\0', sizeof(buffer)); 
 	fcntl (w->fd, F_SETFL, O_NONBLOCK);
-	len = read(w->fd, buffer, sizeof(buffer));
-	LogDebug("STDERR_FromChild_Ready read (fd=%d) len=%d", w->fd, len);
-	if (len == 0) {
-		ev_io_stop(loop, w);
-		free(w);
-	} else if (len > 0) {
-		sprintf(buffer, "%s", buffer);
-		LogDebug("STDERR_FromChild_Ready (fd=%d) buffer=%s", w->fd, buffer);
-		//write(SIO_SOCKET_SAVE_FD, buffer, len);
-		sprintf(result, "%s\n", buffer);
-		len = strlen(result);
-		Writen(sockfd, result, len);
-	} else {
-		LogErr("STDERR_FromChild_Ready (fd=%d) read failed", w->fd, buffer);
+	while ( STDERR_ready ) {
+		nread = STDERR_GetNextLine(w->fd, buffer, sizeof(buffer));
+		if (nread > 0) {
+			t += nread;
+			sprintf(result, "STDERR:%s", buffer);
+			len = strlen(result);
+			STDERR_to_Socket(sockfd, result, strlen(result));
+		} else {
+			myerror = errno;
+			switch(myerror){
+				case 0 :
+					STDERR_ready = FALSE;
+					if (nread == 0){
+						ev_io_stop(loop, w);
+						LogDebug("Child closed STDERR pipe ");
+						SHUTDOWN = TRUE;
+					}
+					break;
+			    case EWOULDBLOCK :
+					STDERR_ready = FALSE;
+					break;
+  				default : // assume any other error is so bad that the I/O channel is unusable.
+					ev_io_stop(loop, w);
+					LogDebug("Child STDERR error pipe closed");
+					STDERR_ready = FALSE;
+					SHUTDOWN = TRUE;
+			}
+		}
 	}
 }
 
@@ -251,6 +424,7 @@ static void Idle (struct ev_loop *loop, ev_idle *w, int revents) {
 	int	childstatus;
 	pid_t waitresult;
 	ev_tstamp yieldtime = 0.10;
+	if (SHUTDOWN) SIO_count = -1;
 
 	if (SIO_count <= 0) {
 		LogDebug("Idle processing (children=%d)", SIO_count);
@@ -268,219 +442,23 @@ static void Idle (struct ev_loop *loop, ev_idle *w, int revents) {
 		ev_sleep(yieldtime);
 	}
 }
-
-/*---------------------------CommandReady------------------------*/
-static void CommandReady (struct ev_loop *loop, ev_io *w, int revents) {
-
-	static char	buffer[LINE_MAX];
-	int len;
-	int *output;
-	char *token; 
-	int token_len;
-	int rc;
-	
-	LogDebug("CommandReady begins");
-	fcntl (w->fd, F_SETFL, O_NONBLOCK);
-	len = read(w->fd, buffer, sizeof(buffer));
-	if (len == 0) {
-		/* End of File */
-		LogErr("CommandReady (fd=%d) (len=0) read EOF", w->fd);
-		if (errno != EAGAIN) {
-			/* 
-			 * This means that the command input has closed and
-			 * this function is at EOF so close the io handler
-			 * and the file descriptor.
-			 *
-			 */
-			ev_io_stop(loop, w);
-			close(w->fd);
-		}
-	} else if (len > 0) {
-		sprintf(buffer, "%s", buffer);
-		LogDebug("CommandReady (fd=%d) buffer=%s", w->fd, buffer);
-
-		token = strtok(buffer, WHITESPACE);
-		token_len = strlen(token);
-		if (! strncmp(token, SIO_STOP, len) ) {
-			KillChildren();
-			ev_io_stop(loop, w);
-			ev_unloop (loop, EVUNLOOP_ALL);
-		} else {
-			LogErr("CommandReady (fd=%d) unknown command", w->fd, buffer);
-		}
-	} else {
-		LogErr("CommandReady (fd=%d) read failed", w->fd);
-	}
-	LogDebug("CommandReady ends");
-}
-
-/*---------------------------CommandAccept------------------------*/
-static void CommandAccept (struct ev_loop *loop, ev_io *w, int revents) {
-
-	ev_io 			*input;
-	int 			comfd = STDIN_FILENO; 
-	struct sockaddr_un	addr;
-	struct stat		statinfo;
-	int			len;
-
-	LogDebug("CommandAccept begins");
-	fcntl (w->fd, F_SETFL, O_NONBLOCK);
-	len = sizeof(addr);
-	errno = 0;
-	while (comfd >= 0) {
-
-		memset(&addr, 0, sizeof(addr));
-		comfd = accept(w->fd, (struct sockaddr *) &addr, &len);
-
-		LogDebug("CommandAccept: accept client path=%s", addr.sun_path);
-
-		if ((comfd < 0) && (errno != EAGAIN)) {
-			LogDebug("CommandAccept: accept fails comfd=%d", comfd);
-			break;
-		}
-		if ((comfd < 0) && (errno == EAGAIN)) {
-			LogDebug("CommandAccept: accept no more inbound requests comfd=%d", comfd);
-			break;
-		}
-
-		/* 
-		 * Setup io handler for new client connection 
-		 */
-		input = malloc(sizeof(ev_io));
-		ev_io_init(input, CommandReady, comfd, EV_READ);
-		ev_io_start(EV_DEFAULT_ input);
-		LogDebug("CommandAccept: accept good comfd=%d", comfd);
-	}
-	LogDebug("CommandAccept ends");
-}
-
-/*---------------------------CreateCommandPipe------------------------*/
-int CreateCommandPipe (int id) {
-
-	char fifo[LINE_MAX];
-	int results;
-	struct sockaddr_un addr;
-	int	len;
-	int	pipefd;
-	LogDebug("CreateCommandPipe Started");
-	snprintf(fifo, sizeof(fifo), SIO_FIFO_FMT, id);
-	unlink(fifo);
-	// strcpy(masterptr->SIO_control, fifo);
-	LogDebug("Creating UNIX socket %s", fifo);
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sun_family = AF_UNIX;
-	strcpy(addr.sun_path, fifo);
-	len = strlen(addr.sun_path) + sizeof(addr.sun_family);
-
-	pipefd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (pipefd < 0) {
-		LogErr("CreateCommandPipe socket failed");
-		return pipefd;
-	}
-
-	results = bind(pipefd, (struct sockaddr *) &addr, len);
-	if (results < 0) {
-		LogErr("CreateCommandPipe bind failed");
-		return results;
-	}
-
-	results = listen(pipefd, 32);
-	if (results < 0) {
-		LogErr("CreateCommandPipe listen failed");
-		return results;
-	}
-
-	LogDebug("CreateCommandPipe listening on fd %d", pipefd );
-	results = pipefd; /* socket to listen to for commands  */
-	LogDebug("CreateCommandPipe results=%d", results);
-	return results;
-}
-
-/*---------------------------DestroyCommandPipe------------------------*/
-int DestroyCommandPipe (int id) {
-
-	char fifo[LINE_MAX];
-	int results;
-
-	snprintf(fifo, sizeof(fifo), SIO_FIFO_FMT, id);
-	results = unlink(fifo);
-
-	return results;
-}
-
-/*---------------------------IsNumber------------------------*/
-static int IsNumber(char *str) {
-
-	int i;
-	int len;
-	int results = 1;
-
-	len = strlen(str);
-	for (i=0; i < len; i++) {
-		if (! isdigit(str[i]))  {
-			results = 0;
-			break;
-		}
-	}
-
-	return results;
-}
-
-/*---------------------------SetupChildExit------------------------*/
-int SetupChildExit(int pid) {
-
-	int results = 0;
-
-	/* Setup event handler for this child process */
-	ev_child_init(&SIO_children[SIO_nextchild], ChildExit, pid, 0);
-	ev_child_start(EV_DEFAULT_ &SIO_children[SIO_nextchild]);
-	SIO_nextchild++;
-	SIO_count++;
-
-	return results; 
-}
 /*---------------------------MakeChild------------------------*/
 int MakeChild(char *cmd, char *user) {
 	
 	LogDebug("MakeChild Starting");
+	static char arg0[LINE_MAX] = "x y z ";
+	static char *argv[MAX_CMD_ARGS];
 	int rc = 0;
 	int argc = 0;
 	static char buf[BUFFSIZE] = "";
-	static char copycmd[LINE_MAX] = "";
-	static char execcmd[LINE_MAX] = "";
-	static char arg0[LINE_MAX] = "";
-	static char *argv[MAX_CMD_ARGS];
-	char *token;
 	ev_io *childout;
 	ev_io *childerr;
 	ev_io *clientout;
 	int i;
 
 	SIO_MAX_FD = sysconf(_SC_OPEN_MAX);
-
-	/* Arg 0 */
-	LogDebug("A -- MakeChild Parse argv");
-	strncpy(arg0, user, sizeof(arg0));
-	strncat(arg0, ": ", sizeof(arg0));
-	strncpy(copycmd, cmd, sizeof(copycmd));
-	token = strtok(copycmd, WHITESPACE);
-	strncpy(execcmd, token, sizeof(execcmd));
-	strncat(arg0, execcmd, sizeof(arg0));
-
-	argv[argc] = arg0;
-	argc++;
-
-	/* Parse rest of command */
-	LogDebug("B -- MakeChild Parse argv");
-	token = strtok(NULL, WHITESPACE);
-	while (token != NULL) {
-		argv[argc] = token;
-		argc++;
-		token = strtok(NULL, WHITESPACE);
-	}
 	
-	argv[argc] = (char *) NULL;
+	argv[6] = (char *) NULL;
 	LogDebug("MakeChild argc=%d cmd=%s", argc, cmd);
 
 	/* Set up standard I/O for the child*/
@@ -491,10 +469,6 @@ int MakeChild(char *cmd, char *user) {
 	ToChild_fd 		= Appl_stdin[WRITE_END];
 	FromChild_fd 	= Appl_stdout[READ_END];
 	FromChildErr_fd = Appl_stderr[READ_END];
-
-	// static int client_output 	= sockfd; 
-	// static int child_output 	= STDOUT_FILENO; 
-	// static int child_output_err = STDERR_FILENO; 
 
    	LogDebug("Slang.main parent, socket descriptor is     : %d", sockfd);
    	LogDebug("Slang.main parent, STDIN descriptor is      : %d", STDIN_FILENO);
@@ -511,7 +485,7 @@ int MakeChild(char *cmd, char *user) {
 
 	if (rc == 0) {
 		/* Set the child process to the appropriate user */
-		SwitchUser(user);
+		//SwitchUser(user);
 
 		/* Redirect stdin for the child, so we can write to the child */
 		close(STDIN_FILENO);
@@ -539,8 +513,9 @@ int MakeChild(char *cmd, char *user) {
     	LogDebug("Slang.main child, STDOUT descriptor should be %d and is: %d", Appl_stdout[WRITE_END], STDOUT_FILENO);
     	LogDebug("Slang.main child, STDERR descriptor should be %d and is: %d", Appl_stderr[WRITE_END], STDERR_FILENO);
 
-		rc = execvp(execcmd, argv);
-		LogDebug("MakeChild execvp failed rc=%d cmd=%s", rc, execcmd);
+    //	sleep(5);
+		rc = execvp("/volume1/applications/appmain", argv); // This is the COBOL application
+		LogDebug("MakeChild execvp failed rc=%d cmd=/volume1/applications/appmain", rc);
 
 	} else if (rc > 0) {
 
@@ -556,21 +531,18 @@ int MakeChild(char *cmd, char *user) {
 		/* Setup event handler for child output */
 		LogDebug("Slang.main parent, setting I/O read event on fd: %d", Appl_stdout[READ_END]);
 		childout = malloc(sizeof(ev_io));
-		ev_io_init(childout, STDOUT_FromChild_Ready, FromChild_fd, EV_READ);
-	//	childout->data = &child_output;
+		ev_io_init(childout, STDOUT_FromChild_Event, FromChild_fd, EV_READ);
 		ev_io_start(EV_DEFAULT_ childout);
 
 		/* Setup event handler for child errors */
 		LogDebug("Slang.main parent, setting I/O read event on fd: %d", Appl_stderr[READ_END]);
 		childerr = malloc(sizeof(ev_io));
-		ev_io_init(childerr, STDERR_FromChild_Ready, FromChildErr_fd, EV_READ);
-	//	childerr->data = &child_output_err;
+		ev_io_init(childerr, STDERR_FromChild_Event, FromChildErr_fd, EV_READ);
 		ev_io_start(EV_DEFAULT_ childerr);
 
 		/* Setup event handler for Client browser output */
 		clientout = malloc(sizeof(ev_io));
-		ev_io_init(clientout, STDOUT_FromClient_Ready, sockfd, EV_READ);
-	//	clientout->data = &client_output;
+		ev_io_init(clientout, SOCKET_FromClient_Event, sockfd, EV_READ);
 		ev_io_start(EV_DEFAULT_ clientout);
 
 		/* Close child end of each pipe */
@@ -595,7 +567,6 @@ int EventLoop (int SIO_pid) {
 	ev_io *input;
 	int command; 
 
-	LogDebug("EventLoop Started");
 	loop = ev_default_loop(EVBACKEND_SELECT);
 
 	/* Create an idle event to stop the program */
@@ -603,11 +574,8 @@ int EventLoop (int SIO_pid) {
 	ev_idle_init(eidle, Idle);
 	ev_idle_start(loop, eidle);
 
-	/* Create an command input event */
-	input = malloc(sizeof(ev_io));
-	command = CreateCommandPipe(SIO_pid);
-	ev_io_init(input, CommandAccept, command, EV_READ);
-	ev_io_start(loop, input);
+	/* Start loop */
+	LogDebug("EventLoop Started");
 	ev_loop(loop, 0);
 	LogDebug("EventLoop event loop finished");
 
@@ -619,35 +587,49 @@ int EventLoop (int SIO_pid) {
 /*-----------------------------------------------------------*/
 int main (int argc, char *argv[]) {
 
-	int memfd;
 	int SIO_pid;
-	int SIO_page;
-	int i;
 	int rc;
-	int wait_rc;
-	int block;
-	unsigned short mpeidx = 0;
-	unsigned short mpeid = 0;
-	unsigned char *memptr;
-	unsigned char *secptr;
-	char	*envvar = NULL;
 	char buf[LINE_MAX];
-	//struct tms sessiontime;
-	struct stat filestat;
 	char logid[] = "slangio_main";
+	struct sockaddr_in client;
+	struct sockaddr_in server;
+	int		addrlen;
+	int		results;
+	char		*client_addr;
+	unsigned short	client_port;
+	char		*server_addr;
+	unsigned short	server_port;
+
 
 	// Get socket descriptor
 	sockfd = getSocket(); 
-    sprintf(buf, "slangio_main, socket descriptor is: %d\n", sockfd);
-    Writen(sockfd, buf, strlen(buf)); // This is first output sent back to the client.
+	sprintf(buf, "slangio_main, socket FD: %d\n", sockfd);
+	STDOUT_to_Socket(sockfd, buf, strlen(buf));
+
+	addrlen = sizeof(client);
+	results = getpeername(sockfd, (struct sockaddr *) &client, &addrlen);
+	if (results == 0 && client.sin_family == AF_INET ) {
+		client_addr = inet_ntoa(client.sin_addr);
+		client_port = ntohs(client.sin_port);
+		sprintf(buf,"slangio_main, client=%s port=%d\n", client_addr, client_port);
+		STDOUT_to_Socket(sockfd, buf, strlen(buf));
+	}
 	
-    openlog("slangio_main", LOG_PID, LOG_USER);
-	setlogmask(LOG_UPTO(LOG_DEBUG));
-    syslog(LOG_INFO, "%s STARTED ", argv[0]);
+	addrlen = sizeof(server);
+	results = getsockname(sockfd, (struct sockaddr *) &server, &addrlen);
+	if (results == 0 && server.sin_family == AF_INET) {
+		server_addr = inet_ntoa(server.sin_addr);
+		server_port = ntohs(server.sin_port);
+		sprintf(buf,"slangio_main, server=%s port=%d\n", server_addr, server_port);
+		STDOUT_to_Socket(sockfd, buf, strlen(buf));
+	}
+
+	LogOpenSystem(logid);
+	LogDebugOn();
+    LogDebug("%s STARTED ", argv[0]);
 	LogDebug("slangio_main started");
 	LogDebug("%s",buf);
 
-	sleep(5);
 	SIO_pid = getpid();
 	LogDebug("Session Leader is %d", SIO_pid);
 	LogDebug("slangio_main Session Leader is %d", SIO_pid);
@@ -657,20 +639,9 @@ int main (int argc, char *argv[]) {
 
 	rc = MakeChild(checksec, loginuser);
 
-	/*
-	 * Start the event loop
-	 * Note:
-	 * If the firstprog exists then the EventLoop will shutdown, and this program, will exit
-	 */
-
 	EventLoop(SIO_pid);
 	
-	/*
-	 * Clean up on exit close the log and return 0 (OK in UNIX)
-	 */
 	LogDebug("slangio_main shutdown");
-	DestroyCommandPipe(SIO_pid);
 	LogClose();
-	rc = 0; 
-	return rc;
+	return 0;
 }
