@@ -19,6 +19,7 @@ application.cob
  * Simple COBOL example working with a SlangIO server.
  * Author: Michael Anderson
  * License: GPLv3
+
 ---------------
 appmain.c
 ---------------
