@@ -5,6 +5,73 @@ static int memfd = -1;
 static int LOG_CONTROL = 0;
 extern char **environ;
 
+static char rn[] PROGMEM = "\r\n";
+void show4bits(char c)
+{
+    char outstr[5]; // the string that will contain the 1's and 0's
+    short b = (short)c;
+    int i;
+    for (i = 3; i >= 0; --i)
+    {
+        outstr[i] = (b & (1<<0)) ? '1' : '0';
+        b = b >> 1;
+    }
+    outstr[4]='\0';
+    printf("%s\n",outstr);
+}
+
+void showuint8(uint8_t b)
+{
+    char outstr[9]; // the string that will contain the 1's and 0's
+    int i;
+    for (i = 7; i >= 0; --i)
+    {
+        outstr[i] = (b & (1<<0)) ? '1' : '0';
+        b = b >> 1;
+    }
+    outstr[8]='\0';
+    printf("%s\n",outstr);
+}
+
+void showuint16(uint16_t b)
+{
+    char outstr[17]; // the string that will contain the 1's and 0's
+    int i;
+    for (i = 15; i >= 0; --i)
+    {
+        outstr[i] = (b & (1<<0)) ? '1' : '0';
+        b = b >> 1;
+    }
+    outstr[16]='\0';
+    printf("%s\n",outstr);
+}
+
+void showuint32(uint32_t b)
+{
+    char outstr[33]; // the string that will contain the 1's and 0's
+    int i;
+    for (i = 31; i >= 0; --i)
+    {
+        outstr[i] = (b & (1<<0)) ? '1' : '0';
+        b = b >> 1;
+    }
+    outstr[32]='\0';
+    printf("%s",outstr);
+}
+
+void showuint64(uint64_t b)
+{
+    char outstr[65]; // the string that will contain the 1's and 0's
+    int i;
+    for (i = 63; i >= 0; --i)
+    {
+        outstr[i] = (b & (1<<0)) ? '1' : '0';
+        b = b >> 1;
+    }
+    outstr[64]='\0';
+    printf("%s",outstr);
+}
+
 void PutEnv (char *format, ...) {
 	va_list args;
 	char *env_var;
@@ -79,7 +146,6 @@ void myhandle_child_death(int signal_event) {
 	LogDebug("Ends");
 	return;
 }
-
 
 static int GetUserAccount(uid_t uid, gid_t gid, char *useracct, int useracctlen) {
 	struct passwd *passwd_info;

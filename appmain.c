@@ -1,5 +1,5 @@
 #include "slangio.h"
-
+// cobc -g -x appmain.c libslangio.c -lev
 #define TRUE 1
 #define FALSE 0
 

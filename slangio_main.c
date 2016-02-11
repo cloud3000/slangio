@@ -1,6 +1,7 @@
 #include "slangio.h"
-#define TRUE 1
-#define FALSE 0
+#include "websocket.h"
+//#define TRUE 1
+//#define FALSE 0
 
 /* Prototypes */ 
 static void 	Idle (struct ev_loop *, ev_idle *, int);
@@ -285,6 +286,18 @@ static void SOCKET_FromClient_Event (struct ev_loop *loop, ev_io *w, int revents
 	int myerror;
 	t = 0;
 	nread = 1;
+
+	uint8_t wsbuffer[BUF_LEN];
+    memset(wsbuffer, 0, BUF_LEN);
+    size_t readedLength = 0;
+    size_t frameSize = BUF_LEN;
+    enum wsState state = WS_STATE_OPENING;
+    uint8_t *data = NULL;
+    size_t dataSize = 0;
+    enum wsFrameType frameType = WS_INCOMPLETE_FRAME;
+    struct handshake hs;
+    //nullHandshake(&hs);
+
 	LogDebug("SOCKET_FromClient_Event ");
 	memset( (void *)&result, '\0', sizeof(result)); 
 	memset( (void *)&buffer, '\0', sizeof(buffer)); 
@@ -554,7 +567,7 @@ int MakeChild(char *cmd, char *user) {
 		LogDebug("Slang.main parent, Closing Appl_stderr[WRITE_END]: %d", Appl_stderr[WRITE_END]);
 		close(Appl_stderr[WRITE_END]);
 	} else {
-		/* Ricky Ricardo might say: MUY maldito MALA! El sistema no puede crear un nuevo proceso */
+		/* MUY maldito MALA! El sistema no puede crear un nuevo proceso */
 		LogAlert("MakeChild failed to fork %s (pid=%d)", cmd, rc);
 	}
 	return rc;
@@ -615,7 +628,6 @@ int main (int argc, char *argv[]) {
 		STDOUT_to_Socket(sockfd, buf, strlen(buf));
 	}
 	
-	addrlen = sizeof(server);
 	results = getsockname(sockfd, (struct sockaddr *) &server, &addrlen);
 	if (results == 0 && server.sin_family == AF_INET) {
 		server_addr = inet_ntoa(server.sin_addr);

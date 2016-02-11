@@ -1,7 +1,8 @@
 /*
  * Copyright (c) 2014 Cloud3000.com
  * Author: Michael at Cloud3000.com
- * cobc -x -lpthread slangio_server.c
+ *
+ * cobc -g -x -lpthread slangio_server.c libslangio.c
  *
  * Special Thanks to Richard Sonnier of Nimble Services,
  * for helping me with the C programming language.
@@ -37,8 +38,8 @@ void    Pthread_create(pthread_t *, const pthread_attr_t *, void * (*)(void *), 
 void    Pthread_detach(pthread_t);
 void    * Client_Thread(void *arg);
 void    error(const char *msg);
-int     session_init(int sockfd);
-void    Close_Thread(int fd);
+int     session_init(void *arg);
+void    Close_Thread(void *arg);
 
 #define PORT 8081
 #define PACKET_DUMP
@@ -48,6 +49,8 @@ static int SIO_MAX_FD;
 //***************************************************
 void Pthread_create(pthread_t *tid, const pthread_attr_t *attr, void * (*func)(void *), void *arg)
 {
+    int *x = (int*)arg;
+    printf("Pthread_create received arg  %d at address %p\n", *x, arg );
     int     n;
     if ( (n = pthread_create(tid, attr, func, arg)) == 0)
         return;
@@ -68,9 +71,12 @@ void Pthread_detach(pthread_t tid)
 //***************************************************
 void * Client_Thread(void *arg)
 {
+    int *x = (int*)arg;
+    printf("Client_Thread received arg %d at address %p\n",*x, arg );
+
     Pthread_detach(pthread_self());
-    session_init((int) arg);
-    Close_Thread((int) arg);
+    session_init(arg); // spawn a new daemon, to remain in servitude to client.
+    Close_Thread(arg);
     return 0;
 }
 
@@ -82,8 +88,12 @@ void error(const char *msg)
 }
 
 //***************************************************
-int session_init(int sockfd)
+int session_init(void *arg)
 {
+    int *fd = (int*)arg;
+    int sockfd = (int)*fd;
+    printf("session_init received arg %d at address %p\n",*fd, arg );
+
     char buf[BUFFSIZE];
     int i = 0;
     int sid;
@@ -93,6 +103,19 @@ int session_init(int sockfd)
     pid_t w;
     char *argv[ARGSMAX];
     SIO_MAX_FD = sysconf(_SC_OPEN_MAX);
+
+// websocket vars
+    uint8_t wsbuffer[BUF_LEN];
+    memset(wsbuffer, 0, BUF_LEN);
+    size_t readedLength = 0;
+    size_t frameSize = BUF_LEN;
+    enum wsState state = WS_STATE_OPENING;
+    uint8_t *data = NULL;
+    size_t dataSize = 0;
+    enum wsFrameType frameType = WS_INCOMPLETE_FRAME;
+    struct handshake hs;
+    nullHandshake(&hs);
+// end websocket vars
 
     syslog(LOG_INFO,"%d starting a session", getpid());
     pid0 = fork();
@@ -137,7 +160,7 @@ int session_init(int sockfd)
             When slangio_main is executed, it will use all 3 standard I/O files. */
 
         for(i=0; i < SIO_MAX_FD; i++) { 
-            if (i != sockfd) close(i); // slangio_main will need this.
+            if (i != sockfd) close(i); // slangio_main will need sockfd.
             }
 
         /* redirect stdin, stdout, and stderr to /dev/null 
@@ -162,9 +185,12 @@ int session_init(int sockfd)
               Trying to keep it simple, no events or signals. */
 
 //***************************************************
-void Close_Thread(int fd)
+void Close_Thread(void *arg)
 {
-    syslog(LOG_INFO,"Close_Thread socket %d", fd);
+    int *fd = (int*)arg;
+    printf("Close_Thread received arg %d at address %p\n",*fd, arg );
+    syslog(LOG_INFO,"Close_Thread socket=%d", *fd);
+    memset(arg,0,sizeof(int));
     return;
 }
 
@@ -172,6 +198,15 @@ void Close_Thread(int fd)
 int main(int argc, char** argv)
 {
     openlog("slangio", LOG_PID, LOG_USER);
+    //
+    //
+    // Start Security deamon
+    //
+    // Start Spooler deamon 
+    //
+    // Start Message deamon
+    //
+    //
     syslog(LOG_INFO, "Slang.IO Server started ");
     pthread_t       tid;
     int i = 0;
@@ -215,9 +250,10 @@ int main(int argc, char** argv)
             syslog(LOG_ERR,"accept failed");
         }
 
-        syslog(LOG_INFO,"connected %s:%d to fd %d\n", inet_ntoa(remote.sin_addr), ntohs(remote.sin_port), NewConns[ncptr]);
+        syslog(LOG_INFO,"connected %s:%d to fd %d\n",
+         inet_ntoa(remote.sin_addr), ntohs(remote.sin_port), NewConns[ncptr]);
 
-        Pthread_create(&tid, NULL, &Client_Thread, (void *) NewConns[ncptr]);
+        Pthread_create(&tid, NULL, &Client_Thread, (void *) &NewConns[ncptr]);
     }
     
     closelog();
