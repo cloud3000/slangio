@@ -1,1 +1,19 @@
 # slangio
+
+====================
+  Description
+====================
+Initially design to run COBOL applications with a web interface.
+
+I don't know of anything in the OpenSource world that does this, or does anything like this. 
+
+====================
+  Explaination
+====================
+The problem getting your traditional COBOL application running with a web interface, is the web server protocol (HTTP) is not designed to run an application in the traditional COBOL sense of an application. HTTP is designed to connect and run single I/O requests/response from --> to the client browser, and then disconnect. This has always been inefficient, and still is horribly inefficient for session based applications.  The traditional COBOL applications want to continue running using an infinite number of I/O's (ACCEPT/DISPLAY) requests. 
+
+Slangio is basically a web-socket application server written in "C", plus a web-based client “single page app” terminal emulator that includes all the HTML5 DOM elements. Similar to "single page app" developed using Bootsctrap & AngularJS, except no HTTP protocol or AJAX. Instead it is %100 web-socket protocol allowing a COBOL application to stay alive doing multiple I/O's (DISPAY/ACCEPT) to a web browser just like a terminal. 
+
+(Not just COBOL) This would also work with any language that can support standard I/O (0,1,2) stdin, stdout, stderr. Although SlangIO runs over a web-socket, piped thru stdio, the format of the payload is totally up-to an agreement between the server application and the browser client. In my COBOL the application on the server I would use JSON Objects that contain both instructions for the browser to create/destroy/modify DOM Elements, and the data values for the DOM elements. Similarly the client would also send a JSON Object containing Instructions, Events, and Data. The structure of these Objects can be formatted anyway I want, therefore the name SlangIO, you make it up as you go. You could send exactly what the old terminal was expecting, as long you code the Javascript on the client to know what to do with it.
+
+
