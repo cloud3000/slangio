@@ -33,6 +33,111 @@ base64_enc.c
  * base64 encoder (RFC3548)
  * Author: Daniel Otte
  * License: GPLv3
-
  
+---------------
+base64_enc.h
+---------------
+ * base64 encoder (Header)
+ * Author: Daniel Otte
+ * License: GPLv3
+
+---------------
+browser.c
+---------------
+ * Browser working with a SlangIO server.
+ * Author: Michael Anderson
+ * License: GPLv3
+
+This is a not a real browser, it was used to test the server before the web-socket logic was in place. Now it is not needed or usable. However, upon second thought, it will be used to test non-web clients, as these should also be supported.
+
+---------------
+config.h
+---------------
+ * Not sure where this came from.
+
+This is for future use, but not now.
+
+---------------
+libslangio.c
+---------------
+ * SlangIO function library.
+ * Author: Michael Anderson
+ * License: GPLv3
+
+---------------
+security.cob
+---------------
+ * Simple COBOL example working with a SlangIO server.
+ * Author: Michael Anderson
+ * License: GPLv3
+
+---------------
+security.cob
+---------------
+ * Simple COBOL example working with a SlangIO server.
+ * Author: Michael Anderson
+ * License: GPLv3
+
+---------------
+sha1.c
+---------------
+ * Author	Daniel Otte
+ * Date	2006-10-08
+ * License GPLv3 or later
+ * Brief SHA-1 implementation.
+
+---------------
+sha1.h
+---------------
+ * Author	Daniel Otte
+ * Date	2006-10-08
+ * License GPLv3 or later
+ * Header.
+
+---------------
+slangio.h
+---------------
+ * Author	Michael Anderson
+ * Date	2006-10-08
+ * License GPLv3 or later
+ * Header.
+
+---------------
+slangio_main.c
+---------------
+ * Author	Michael Anderson
+ * Date	Feb. 2015
+ * License GPLv3 or later
+ * This is the main process in the SlangIO session.
+
+This program is forked and daemonized by the SlangIO Server process.
+
+---------------
+slangio_server.c
+---------------
+ * Author	Michael Anderson
+ * Date	Feb. 2015
+ * License GPLv3 or later
+ * This is the SlangIO Server process.
+
+---------------
+upn.h
+---------------
+ * Not sure, this will be removed soon.
+
+---------------
+websocket.c
+---------------
+ * Author	Putilov Andrey
+ * Date	2013
+ * License GPLv3 or later
+ * Web socket hand-shake and payload processing.
+
+---------------
+websocket.h
+---------------
+ * Author	Putilov Andrey
+ * Date	2013
+ * License GPLv3 or later
+ * header .
 
