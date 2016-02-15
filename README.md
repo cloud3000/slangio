@@ -51,23 +51,9 @@ browser.c
 This is a not a real browser, it was used to test the server before the web-socket logic was in place. Now it is not needed or usable. However, upon second thought, it will be used to test non-web clients, as these should also be supported.
 
 ---------------
-config.h
----------------
- * Not sure where this came from.
-
-This is for future use, but not now.
-
----------------
 libslangio.c
 ---------------
  * SlangIO function library.
- * Author: Michael Anderson
- * License: GPLv3
-
----------------
-security.cob
----------------
- * Simple COBOL example working with a SlangIO server.
  * Author: Michael Anderson
  * License: GPLv3
 
@@ -119,11 +105,6 @@ slangio_server.c
  * Date	Feb. 2015
  * License GPLv3 or later
  * This is the SlangIO Server process.
-
----------------
-upn.h
----------------
- * Not sure, this will be removed soon.
 
 ---------------
 websocket.c
