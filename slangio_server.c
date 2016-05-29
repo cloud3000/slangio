@@ -42,7 +42,6 @@ int     session_init(void *arg);
 void    Close_Thread(void *arg);
 
 #define PORT 8081
-#define PACKET_DUMP
 
 static int SIO_MAX_FD;
 
@@ -103,19 +102,6 @@ int session_init(void *arg)
     pid_t w;
     char *argv[ARGSMAX];
     SIO_MAX_FD = sysconf(_SC_OPEN_MAX);
-
-// websocket vars
-    uint8_t wsbuffer[BUF_LEN];
-    memset(wsbuffer, 0, BUF_LEN);
-    size_t readedLength = 0;
-    size_t frameSize = BUF_LEN;
-    enum wsState state = WS_STATE_OPENING;
-    uint8_t *data = NULL;
-    size_t dataSize = 0;
-    enum wsFrameType frameType = WS_INCOMPLETE_FRAME;
-    struct handshake hs;
-    nullHandshake(&hs);
-// end websocket vars
 
     syslog(LOG_INFO,"%d starting a session", getpid());
     pid0 = fork();

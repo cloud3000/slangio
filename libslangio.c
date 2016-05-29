@@ -5,7 +5,7 @@ static int memfd = -1;
 static int LOG_CONTROL = 0;
 extern char **environ;
 
-static char rn[] PROGMEM = "\r\n";
+//static char rn[] PROGMEM = "\r\n";
 void show4bits(char c)
 {
     char outstr[5]; // the string that will contain the 1's and 0's

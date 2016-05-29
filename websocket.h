@@ -20,14 +20,15 @@
  * THE SOFTWARE.
  *
  */
-
+ 
 #ifndef WEBSOCKET_H
-#define	WEBSOCKET_H
-
-#ifdef	__cplusplus
+#define WEBSOCKET_H
+ 
+#ifdef __cplusplus
 extern "C" {
+ 
 #endif
-
+ 
 #include <assert.h>
 #include <stdint.h> /* uint8_t */
 #include <stdlib.h> /* strtoul */
@@ -35,7 +36,6 @@ extern "C" {
 #include <string.h>
 #include <stdio.h> /* sscanf */
 #include <ctype.h> /* isdigit */
-#include <pthread.h>
 //#include <stddef.h> /* size_t */
 #include "base64_enc.h"
 #include "sha1.h"
@@ -51,14 +51,14 @@ extern "C" {
     #define memcmp_P memcmp
     #define memcpy_P memcpy
 #endif
-
+ 
 #ifndef TRUE
     #define TRUE 1
 #endif
 #ifndef FALSE
     #define FALSE 0
 #endif
-
+ 
 static const char connectionField[] PROGMEM = "Connection: ";
 static const char upgrade[] PROGMEM = "upgrade";
 static const char upgrade2[] PROGMEM = "Upgrade";
@@ -71,8 +71,9 @@ static const char protocolField[] PROGMEM = "Sec-WebSocket-Protocol: ";
 static const char versionField[] PROGMEM = "Sec-WebSocket-Version: ";
 static const char version[] PROGMEM = "13";
 static const char secret[] PROGMEM = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
-enum wsFrameType { // errors starting from 0xF0
+ 
+enum wsFrameType {
+ // errors starting from 0xF0
     WS_EMPTY_FRAME = 0xF0,
     WS_ERROR_FRAME = 0xF1,
     WS_INCOMPLETE_FRAME = 0xF2,
@@ -82,22 +83,27 @@ enum wsFrameType { // errors starting from 0xF0
     WS_PONG_FRAME = 0x0A,
     WS_OPENING_FRAME = 0xF3,
     WS_CLOSING_FRAME = 0x08
+ 
 };
-    
+     
 enum wsState {
+ 
     WS_STATE_OPENING,
     WS_STATE_NORMAL,
     WS_STATE_CLOSING
+ 
 };
-
+ 
 struct handshake {
+ 
     char *host;
     char *origin;
     char *key;
     char *resource;
     enum wsFrameType frameType;
+ 
 };
-
+ 
     /**
      * @param inputFrame Pointer to input frame
      * @param inputLength Length of input frame
@@ -106,7 +112,7 @@ struct handshake {
      */
     enum wsFrameType wsParseHandshake(const uint8_t *inputFrame, size_t inputLength,
                                       struct handshake *hs);
-	
+ 
     /**
      * @param hs Filled handshake structure
      * @param outFrame Pointer to frame buffer
@@ -114,7 +120,7 @@ struct handshake {
      */
     void wsGetHandshakeAnswer(const struct handshake *hs, uint8_t *outFrame,
                               size_t *outLength);
-
+ 
     /**
      * @param data Pointer to input data array
      * @param dataLength Length of data array
@@ -124,7 +130,7 @@ struct handshake {
      */
     void wsMakeFrame(const uint8_t *data, size_t dataLength,
                      uint8_t *outFrame, size_t *outLength, enum wsFrameType frameType);
-
+ 
     /**
      *
      * @param inputFrame Pointer to input frame. Frame will be modified.
@@ -135,27 +141,17 @@ struct handshake {
      */
     enum wsFrameType wsParseInputFrame(uint8_t *inputFrame, size_t inputLength,
                                        uint8_t **dataPtr, size_t *dataLength);
-
-    /**
+ 
+    /**     {[($<%*^&!+@_#\|:";'>,./"?)]} 
+                     Slang I/O
      * @param hs NULL handshake structure
      */
     void nullHandshake(struct handshake *hs);
-
-#ifdef	__cplusplus
+ 
+#ifdef __cplusplus
+ 
 }
 #endif
-
-#endif	/* WEBSOCKET_H */
-
-#define myMSG_LEN 32
-#define MAX_CONTROL_BLOCKS 4096
-#define RESERVED_BLOCKS 512
-#define myCHILD_BLOCKS (MAX_CONTROL_BLOCKS - RESERVED_BLOCKS)
-    
-    void Pthread_create(pthread_t *tid, const pthread_attr_t *attr,
-               void * (*func)(void *), void *arg);
-
-    static void err_doit(int errnoflag, int level, const char *fmt, va_list ap);
-
-
-
+ 
+#endif
+/* WEBSOCKET_H */

@@ -1,9 +1,14 @@
 #include "slangio.h"
 #include "websocket.h"
+// cobc -x slangio_main.c libslangio.c websocket.c sha1.c base64_enc.c -lev
 //#define TRUE 1
 //#define FALSE 0
+#define PACKET_DUMP
+#define BUF_LEN 0xFFFF
 
 /* Prototypes */ 
+void error(const char *);
+int safeSend(int , const uint8_t *, size_t );
 static void 	Idle (struct ev_loop *, ev_idle *, int);
 static void 	ChildExit (EV_P_ ev_child *, int);
 int 			getSocket();
@@ -62,49 +67,61 @@ static int		SOCKET_cnt;
 static char		*SOCKET_ptr;
 static char		SOCKET_buf[BUFFSIZE];
 /* ************************************************************** */
+void error(const char *msg)
+{
+ 
+    perror(msg);
+    exit(EXIT_FAILURE);
+ 
+}
+ 
+/* ************************************************************** */
+int safeSend(int clientSocket, const uint8_t *buffer, size_t bufferSize)
+{
+ 
+    ssize_t written = send(clientSocket, buffer, bufferSize, 0);
+    if (written == -1) {
+ 
+        close(clientSocket);
+        perror("send failed");
+        return EXIT_FAILURE;
+     
+    }
+    if (written != bufferSize) {
+ 
+        close(clientSocket);
+        perror("written not all bytes");
+        return EXIT_FAILURE;
+     
+    }
+     
+    return EXIT_SUCCESS;
+ 
+}
+/* ************************************************************** */
 ssize_t	STDOUT_to_Socket(int fd, const void *vptr, size_t n)
 {
-	size_t		nleft;
-	ssize_t		nwritten;
-	const char	*ptr;
+    uint8_t buffer[BUF_LEN];
+    size_t frameSize = n;
 
-	ptr = vptr;
-	nleft = n;
-	while (nleft > 0) {
-		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
-			if (nwritten < 0 && errno == EINTR)
-				nwritten = 0;		/* and call write() again */
-			else
-				return(-1);			/* error */
-		}
+    memset(buffer, 0, BUF_LEN);
+    wsMakeFrame((uint8_t *)vptr, n, buffer, &frameSize, WS_TEXT_FRAME);
 
-		nleft -= nwritten;
-		ptr   += nwritten;
-	}
-	return(n);
+    return(safeSend(fd, buffer, frameSize));
 }
+
 /* ************************************************************** */
 ssize_t	STDERR_to_Socket(int fd, const void *vptr, size_t n)
 {
-	size_t		nleft;
-	ssize_t		nwritten;
-	const char	*ptr;
+    uint8_t buffer[BUF_LEN];
+    size_t frameSize = 0;
 
-	ptr = vptr;
-	nleft = n;
-	while (nleft > 0) {
-		if ( (nwritten = write(fd, ptr, nleft)) <= 0) {
-			if (nwritten < 0 && errno == EINTR)
-				nwritten = 0;		/* and call write() again */
-			else
-				return(-1);			/* error */
-		}
+    memset(buffer, 0, BUF_LEN);
+    wsMakeFrame((uint8_t *)vptr, n, buffer, &frameSize, WS_TEXT_FRAME);
 
-		nleft -= nwritten;
-		ptr   += nwritten;
-	}
-	return(n);
+    return(safeSend(fd, buffer, frameSize));
 }
+
 /* ************************************************************** */
 ssize_t	SOCKET_to_Appl(int fd, const void *vptr, size_t n)
 {
@@ -274,8 +291,65 @@ static void ChildExit (EV_P_ ev_child *w, int revents) {
 		SIO_count--;
 	}
 }
+/*---------------------------SOCKET_FromClient_Event------------------------*/
+static void SOCKET_FromClient_Event (struct ev_loop *loop, ev_io *w, int revents) {
+ 
+    uint8_t buffer[BUF_LEN];
+	char	result[BUF_LEN];
+    memset(buffer, 0, BUF_LEN);
+    size_t len = 0;
+    size_t readedLength = 0;
+    size_t frameSize = BUF_LEN;
+    enum wsState state = WS_STATE_OPENING;
+    uint8_t *data = NULL;
+    size_t dataSize = 0;
+    enum wsFrameType frameType = WS_INCOMPLETE_FRAME;
+    struct handshake hs;
+    nullHandshake(&hs);
+     
+    #define prepareBuffer frameSize = BUF_LEN; memset(buffer, 0, BUF_LEN);
+    #define initNewFrame frameType = WS_INCOMPLETE_FRAME; readedLength = 0; memset(buffer, 0, BUF_LEN);
+     
+    while (frameType == WS_INCOMPLETE_FRAME) {
+ 
+        ssize_t readed = recv(w->fd, buffer+readedLength, BUF_LEN-readedLength, 0);
+        if (!readed) {
+            return;
+        }
+        readedLength+= readed;
+        frameType = wsParseInputFrame(buffer, readedLength, &data, &dataSize);
+        if ((frameType == WS_INCOMPLETE_FRAME && readedLength == BUF_LEN) || frameType == WS_ERROR_FRAME) {
+                prepareBuffer;
+                wsMakeFrame(NULL, 0, buffer, &frameSize, WS_CLOSING_FRAME);
+                if (safeSend(w->fd, buffer, frameSize) == EXIT_FAILURE)
+                    break;
+                state = WS_STATE_CLOSING;
+                initNewFrame;         
+        }
+        if (frameType == WS_CLOSING_FRAME) {
+                prepareBuffer;
+                wsMakeFrame(NULL, 0, buffer, &frameSize, WS_CLOSING_FRAME);
+                safeSend(w->fd, buffer, frameSize);
+         		sprintf(result, "ev://cli_exit/\n");
+                LogDebug("SOCKET_FromClient_Event %s",result);
+    	    	len = strlen(result);
+	        	SOCKET_to_Appl(Appl_stdin[WRITE_END], result, len);
+                break;
+        } else if (frameType == WS_TEXT_FRAME) {
+    		sprintf(result, "%s\n", buffer+6);
+            LogDebug("SOCKET_FromClient_Event %s",result);
+    		len = strlen(result);
+	    	SOCKET_to_Appl(Appl_stdin[WRITE_END], result, len);
+            break;
+        }
+        initNewFrame;
+    } 
+    return;
+}
 
 /*---------------------------SOCKET_FromClient_Event------------------------*/
+
+/*
 static void SOCKET_FromClient_Event (struct ev_loop *loop, ev_io *w, int revents) {
 	ssize_t	nread;
 	ssize_t len;
@@ -286,17 +360,6 @@ static void SOCKET_FromClient_Event (struct ev_loop *loop, ev_io *w, int revents
 	int myerror;
 	t = 0;
 	nread = 1;
-
-	uint8_t wsbuffer[BUF_LEN];
-    memset(wsbuffer, 0, BUF_LEN);
-    size_t readedLength = 0;
-    size_t frameSize = BUF_LEN;
-    enum wsState state = WS_STATE_OPENING;
-    uint8_t *data = NULL;
-    size_t dataSize = 0;
-    enum wsFrameType frameType = WS_INCOMPLETE_FRAME;
-    struct handshake hs;
-    //nullHandshake(&hs);
 
 	LogDebug("SOCKET_FromClient_Event ");
 	memset( (void *)&result, '\0', sizeof(result)); 
@@ -337,6 +400,7 @@ static void SOCKET_FromClient_Event (struct ev_loop *loop, ev_io *w, int revents
 		}
 	}
 }
+*/
 
 /*---------------------------STDOUT_FromChild_Event------------------------*/
 static void STDOUT_FromChild_Event (struct ev_loop *loop, ev_io *w, int revents) {
@@ -613,9 +677,92 @@ int main (int argc, char *argv[]) {
 	char		*server_addr;
 	unsigned short	server_port;
 
+//ws vars
+    uint8_t buffer[BUF_LEN];
+    memset(buffer, 0, BUF_LEN);
+    size_t readedLength = 0;
+    size_t frameSize = BUF_LEN;
+    enum wsState state = WS_STATE_OPENING;
+    uint8_t *data = NULL;
+    size_t dataSize = 0;
+    enum wsFrameType frameType = WS_INCOMPLETE_FRAME;
+    struct handshake hs;
+    nullHandshake(&hs);
+     
+    #define prepareBuffer frameSize = BUF_LEN; memset(buffer, 0, BUF_LEN);
+    #define initNewFrame frameType = WS_INCOMPLETE_FRAME; readedLength = 0; memset(buffer, 0, BUF_LEN);
+//ws var end
+
 
 	// Get socket descriptor
 	sockfd = getSocket(); 
+    while (frameType == WS_INCOMPLETE_FRAME) {
+ 
+        ssize_t readed = recv(sockfd, buffer+readedLength, BUF_LEN-readedLength, 0);
+        if (!readed) {
+            return 1;
+        }
+
+        readedLength+= readed;
+  
+        frameType = wsParseHandshake(buffer, readedLength, &hs);
+                  
+        if ((frameType == WS_INCOMPLETE_FRAME && readedLength == BUF_LEN) || frameType == WS_ERROR_FRAME) {
+ 
+            if (frameType == WS_INCOMPLETE_FRAME)
+                printf("buffer too small");
+            else
+                printf("error in incoming frame\n");
+             
+            if (state == WS_STATE_OPENING) {
+ 
+                prepareBuffer;
+                frameSize = sprintf((char *)buffer,
+                                    "HTTP/1.1 400 Bad Request\r\n"
+                                    "%s%s\r\n\r\n",
+                                    versionField,
+                                    version);
+                safeSend(sockfd, buffer, frameSize);
+                break;
+             
+            } else {
+ 
+                prepareBuffer;
+                wsMakeFrame(NULL, 0, buffer, &frameSize, WS_CLOSING_FRAME);
+                if (safeSend(sockfd, buffer, frameSize) == EXIT_FAILURE)
+                    break;
+                state = WS_STATE_CLOSING;
+                initNewFrame;
+             
+            }
+         
+        }
+         
+        if (state == WS_STATE_OPENING) {
+ 
+            assert(frameType == WS_OPENING_FRAME);
+            if (frameType == WS_OPENING_FRAME) {
+ 
+                // if resource is right, generate answer handshake and send it
+                if (strcmp(hs.resource, "/echo") != 0) {
+ 
+                    frameSize = sprintf((char *)buffer, "HTTP/1.1 404 Not Found\r\n\r\n");
+                    if (safeSend(sockfd, buffer, frameSize) == EXIT_FAILURE)
+                        break;
+                 
+                }
+             
+                prepareBuffer;
+                wsGetHandshakeAnswer(&hs, buffer, &frameSize);
+                if (safeSend(sockfd, buffer, frameSize) == EXIT_FAILURE)
+                    break;
+                state = WS_STATE_NORMAL;
+                initNewFrame;
+                break;             
+            } 
+        }    
+    } // read/write cycle
+
 	sprintf(buf, "slangio_main, socket FD: %d\n", sockfd);
 	STDOUT_to_Socket(sockfd, buf, strlen(buf));
 
