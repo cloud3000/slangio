@@ -1,5 +1,15 @@
 # slangio
 Initially designed to run COBOL applications with a web interface, without modification. I do know of some propriatary solutions that do this, however I don't know of anything in the OpenSource world that does this, or does anything like this. 
+Please leave email at michael@cloud3000.com if you know otherwise, or just to say Hi.
+
+====================
+Building the Executable code.
+====================
+See: build_test.sh
+Notice that I am lazy, using the cobc (Gnu-Cobol) compiler.
+Most important is that this code is intended to be built and run on Linux... and only tested on Ubuntu 14.04 LTS, both server and desktop versions.
+You must also install the lev development package before running build_test.sh
+On Ubuntu 14.04: 'sudo apt-get install libev-dev'
 
 ====================
   Explanation.

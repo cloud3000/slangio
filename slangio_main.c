@@ -268,8 +268,9 @@ int getSocket()
     int file=0;
     struct stat fileStat;
     int SIO_MAX_FD = sysconf(_SC_OPEN_MAX);
+    int i=0;
 
-     for (int i = 0; i < SIO_MAX_FD; ++i)
+     for (i = 0; i < SIO_MAX_FD; ++i)
     {
         if(fstat(i,&fileStat) == 0) {
             if ((fileStat.st_mode & S_IFMT) == S_IFSOCK) {
